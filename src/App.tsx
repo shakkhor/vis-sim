@@ -1,11 +1,18 @@
 import Viewport3D from './components/Viewport3D';
 import Timeline from './components/Timeline';
 import SidePanel from './components/SidePanel';
+import PlanIO from './components/PlanIO';
+import { useShortcuts } from './hooks/useShortcuts';
 import { useVisSim } from './state/store';
 import { usePlanAnalysis } from './state/selectors';
 import { fmtTime } from './domain/engine';
+import { SCENES } from './domain/scenes';
 
 export default function App() {
+  useShortcuts();
+  const scene = useVisSim((s) => s.scene);
+  const setScene = useVisSim((s) => s.setScene);
+  const planName = useVisSim((s) => s.planName);
   const playhead = useVisSim((s) => s.playhead);
   const playing = useVisSim((s) => s.playing);
   const togglePlay = useVisSim((s) => s.togglePlay);
@@ -13,14 +20,22 @@ export default function App() {
   const setMode = useVisSim((s) => s.setMode);
   const viewMode = useVisSim((s) => s.viewMode);
   const setViewMode = useVisSim((s) => s.setViewMode);
-  const { conflicts, approverTeamIds } = usePlanAnalysis();
+  const { conflicts, approverTeamIds, violations } = usePlanAnalysis();
 
   return (
     <div className="app">
       <header className="topbar">
         <span className="logo">VisSim</span>
-        <span className="muted">Phase 0 — flagship loop prototype</span>
+        <select aria-label="Scene" value={scene.id} onChange={(e) => setScene(e.target.value)}>
+          {SCENES.map((entry) => (
+            <option key={entry.scene.id} value={entry.scene.id}>
+              {entry.scene.name}
+            </option>
+          ))}
+        </select>
+        <span className="muted">{planName}</span>
         <div className="grow" />
+        <PlanIO />
         <button className={viewMode === '3d' ? 'active' : ''} onClick={() => setViewMode('3d')}>
           3D
         </button>
@@ -43,9 +58,13 @@ export default function App() {
       </header>
       <div className="main">
         <div className="viewport">
-          <Viewport3D conflicts={conflicts} />
+          <Viewport3D conflicts={conflicts} violations={violations} />
         </div>
-        <SidePanel conflicts={conflicts} approverTeamIds={approverTeamIds} />
+        <SidePanel
+          conflicts={conflicts}
+          approverTeamIds={approverTeamIds}
+          violations={violations}
+        />
       </div>
       <Timeline conflicts={conflicts} />
     </div>
