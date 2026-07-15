@@ -1,5 +1,5 @@
-import { useMemo, useRef } from 'react';
-import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import {
   OrbitControls,
   Html,
@@ -11,29 +11,82 @@ import { Vector3 } from 'three';
 import { useVisSim } from '../state/store';
 import { teamColor } from '../domain/scene';
 import { actorPositions } from '../domain/actors';
-import type { Conflict, Move, Resource, RuleViolation, SceneDef } from '../domain/types';
+import { snap } from '../domain/sceneEdit';
+import type {
+  Conflict,
+  Move,
+  Rect,
+  Resource,
+  RuleViolation,
+  SceneDef,
+  Vec2,
+} from '../domain/types';
+
+/** Mirrors the domain-side minimum footprint (sceneEdit's MIN_SIZE) so the
+ * viewport never requests a rect the domain would clamp differently. */
+const MIN_SIZE = 2;
+
+/** One in-flight drag gesture. Pointer-down on an editable object arms this;
+ * the large ground mesh supplies ground-plane intersections on pointer-move. */
+type DragState =
+  | { kind: 'move'; id: string; start: Vec2; applied: Vec2 }
+  | { kind: 'resize'; id: string; min: Vec2; last: Rect | null }
+  | { kind: 'waypoint'; moveId: string; index: number; last: Vec2 | null };
+
+function rectFromPoints(a: Vec2, b: Vec2): Rect {
+  return {
+    x: Math.min(a.x, b.x),
+    z: Math.min(a.z, b.z),
+    w: Math.abs(a.x - b.x),
+    d: Math.abs(a.z - b.z),
+  };
+}
 
 function ResourceMesh({
   scene,
   resource,
   conflictActive,
+  selected,
+  onSelect,
+  onDragStart,
 }: {
   scene: SceneDef;
   resource: Resource;
   conflictActive: boolean;
+  selected: boolean;
+  onSelect?: (e: ThreeEvent<MouseEvent>) => void;
+  onDragStart?: (e: ThreeEvent<PointerEvent>) => void;
 }) {
   const { rect, kind } = resource;
   const color = kind === 'connector' ? '#e8c34a' : teamColor(scene, resource.ownerTeamIds[0]);
+  const baseOpacity = kind === 'connector' ? 0.55 : 0.28;
   return (
-    <group position={[rect.x + rect.w / 2, 0, rect.z + rect.d / 2]}>
+    <group
+      position={[rect.x + rect.w / 2, 0, rect.z + rect.d / 2]}
+      onClick={onSelect}
+      onPointerDown={onDragStart}
+    >
       <mesh position={[0, 0.15, 0]}>
         <boxGeometry args={[rect.w, 0.3, rect.d]} />
         <meshStandardMaterial
           color={color}
           transparent
-          opacity={kind === 'connector' ? 0.55 : 0.28}
+          opacity={selected ? Math.min(1, baseOpacity + 0.3) : baseOpacity}
         />
       </mesh>
+      {selected && (
+        <Line
+          points={[
+            [-rect.w / 2, 0.42, -rect.d / 2],
+            [rect.w / 2, 0.42, -rect.d / 2],
+            [rect.w / 2, 0.42, rect.d / 2],
+            [-rect.w / 2, 0.42, rect.d / 2],
+            [-rect.w / 2, 0.42, -rect.d / 2],
+          ]}
+          color="#ffffff"
+          lineWidth={2.5}
+        />
+      )}
       {conflictActive && (
         <mesh position={[0, 0.45, 0]}>
           <boxGeometry args={[rect.w + 0.6, 0.3, rect.d + 0.6]} />
@@ -167,22 +220,67 @@ function Playback() {
   return null;
 }
 
-export default function Viewport3D({
+/** Everything that renders from (or edits) the plan/scene. Lives inside the
+ * Canvas so it can reach the default OrbitControls via useThree. */
+function SceneBody({
   conflicts,
-  violations = [],
+  violations,
 }: {
   conflicts: Conflict[];
-  violations?: RuleViolation[];
+  violations: RuleViolation[];
 }) {
   const scene = useVisSim((s) => s.scene);
   const moves = useVisSim((s) => s.moves);
   const playhead = useVisSim((s) => s.playhead);
   const mode = useVisSim((s) => s.mode);
-  const viewMode = useVisSim((s) => s.viewMode);
   const draftPath = useVisSim((s) => s.draftPath);
   const addDraftPoint = useVisSim((s) => s.addDraftPoint);
   const selectedMoveId = useVisSim((s) => s.selectedMoveId);
-  const groundRef = useRef(null);
+  const selectedResourceId = useVisSim((s) => s.selectedResourceId);
+  const pendingAdd = useVisSim((s) => s.pendingAdd);
+  const selectResource = useVisSim((s) => s.selectResource);
+  const moveResourceBy = useVisSim((s) => s.moveResourceBy);
+  const resizeResourceTo = useVisSim((s) => s.resizeResourceTo);
+  const addResourceAt = useVisSim((s) => s.addResourceAt);
+  const moveMoveWaypoint = useVisSim((s) => s.moveMoveWaypoint);
+
+  // Camera orbit is disabled while a drag gesture is live (PRD §4). The drei
+  // OrbitControls below is makeDefault, so it is reachable as state.controls.
+  const controls = useThree((s) => s.controls) as unknown as { enabled: boolean } | null;
+  const controlsRef = useRef(controls);
+  useEffect(() => {
+    controlsRef.current = controls;
+  }, [controls]);
+
+  const dragRef = useRef<DragState | null>(null);
+  // Two-click create gesture (US-5): first click anchors, move previews.
+  const [drawAnchor, setDrawAnchor] = useState<Vec2 | null>(null);
+  const [drawCursor, setDrawCursor] = useState<Vec2 | null>(null);
+
+  const beginDrag = useCallback((state: DragState) => {
+    dragRef.current = state;
+    if (controlsRef.current) controlsRef.current.enabled = false;
+  }, []);
+
+  const endDrag = useCallback(() => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    if (controlsRef.current) controlsRef.current.enabled = true;
+  }, []);
+
+  // Window-level fallback: pointer-up outside the ground mesh still ends the drag.
+  useEffect(() => {
+    window.addEventListener('pointerup', endDrag);
+    return () => window.removeEventListener('pointerup', endDrag);
+  }, [endDrag]);
+
+  // ESC / tool disarm elsewhere clears pendingAdd — drop any half-drawn preview.
+  useEffect(() => {
+    if (!pendingAdd) {
+      setDrawAnchor(null);
+      setDrawCursor(null);
+    }
+  }, [pendingAdd]);
 
   const activeConflictResourceIds = useMemo(() => {
     const ids = new Set(
@@ -195,14 +293,222 @@ export default function Viewport3D({
   }, [conflicts, violations, playhead]);
 
   const onGroundClick = (e: ThreeEvent<MouseEvent>) => {
-    if (mode !== 'draw') return;
-    if (e.delta > 4) return; // ignore orbit drags
+    if (e.delta > 4) return; // ignore orbit/edit drags
+    if (mode === 'draw') {
+      e.stopPropagation();
+      addDraftPoint({ x: snap(e.point.x), z: snap(e.point.z) });
+      return;
+    }
+    if (mode !== 'scene') return;
     e.stopPropagation();
-    addDraftPoint({ x: Math.round(e.point.x * 2) / 2, z: Math.round(e.point.z * 2) / 2 });
+    const p = { x: snap(e.point.x), z: snap(e.point.z) };
+    if (pendingAdd) {
+      if (!drawAnchor) {
+        setDrawAnchor(p);
+        setDrawCursor(p);
+      } else {
+        addResourceAt(pendingAdd, rectFromPoints(drawAnchor, p));
+        setDrawAnchor(null);
+        setDrawCursor(null);
+      }
+      return;
+    }
+    selectResource(null); // empty-ground click clears selection (US-1)
   };
 
+  // All drag gestures resolve against the ground plane here. Store calls are
+  // deltas-since-last-applied-step (move) or absolute snapped targets guarded
+  // by a last-applied check (resize/waypoint), so nothing compounds and the
+  // store is only hit when the snapped value actually changes.
+  const onGroundPointerMove = (e: ThreeEvent<PointerEvent>) => {
+    const drag = dragRef.current;
+    if (drag) {
+      const p = { x: e.point.x, z: e.point.z };
+      if (drag.kind === 'move') {
+        const dx = snap(p.x - drag.start.x);
+        const dz = snap(p.z - drag.start.z);
+        if (dx !== drag.applied.x || dz !== drag.applied.z) {
+          moveResourceBy(drag.id, dx - drag.applied.x, dz - drag.applied.z);
+          drag.applied = { x: dx, z: dz };
+        }
+      } else if (drag.kind === 'resize') {
+        const next: Rect = {
+          x: drag.min.x,
+          z: drag.min.z,
+          w: Math.max(MIN_SIZE, snap(p.x) - drag.min.x),
+          d: Math.max(MIN_SIZE, snap(p.z) - drag.min.z),
+        };
+        if (!drag.last || next.w !== drag.last.w || next.d !== drag.last.d) {
+          resizeResourceTo(drag.id, next);
+          drag.last = next;
+        }
+      } else {
+        const sp = { x: snap(p.x), z: snap(p.z) };
+        if (!drag.last || sp.x !== drag.last.x || sp.z !== drag.last.z) {
+          moveMoveWaypoint(drag.moveId, drag.index, sp);
+          drag.last = sp;
+        }
+      }
+      return;
+    }
+    if (pendingAdd && drawAnchor) {
+      setDrawCursor({ x: snap(e.point.x), z: snap(e.point.z) });
+    }
+  };
+
+  const editable = mode === 'scene' && !pendingAdd;
+  const selectedResource =
+    mode === 'scene' && selectedResourceId
+      ? (scene.resources.find((r) => r.id === selectedResourceId) ?? null)
+      : null;
+  const selectedMove =
+    (mode === 'select' || mode === 'scene') && selectedMoveId
+      ? (moves.find((m) => m.id === selectedMoveId) ?? null)
+      : null;
+  const previewRect = drawAnchor && drawCursor ? rectFromPoints(drawAnchor, drawCursor) : null;
+
   return (
-    <Canvas shadows={false}>
+    <group>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 4]}
+        onClick={onGroundClick}
+        onPointerMove={onGroundPointerMove}
+        onPointerUp={endDrag}
+      >
+        <planeGeometry args={[130, 90]} />
+        <meshStandardMaterial color="#232939" />
+      </mesh>
+
+      {scene.resources.map((r) => (
+        <ResourceMesh
+          key={r.id}
+          scene={scene}
+          resource={r}
+          conflictActive={activeConflictResourceIds.has(r.id)}
+          selected={mode === 'scene' && r.id === selectedResourceId}
+          onSelect={
+            editable
+              ? (e) => {
+                  if (e.delta > 4) return; // ignore orbit/edit drags
+                  e.stopPropagation();
+                  selectResource(r.id);
+                }
+              : undefined
+          }
+          onDragStart={
+            editable && r.id === selectedResourceId
+              ? (e) => {
+                  e.stopPropagation();
+                  beginDrag({
+                    kind: 'move',
+                    id: r.id,
+                    start: { x: e.point.x, z: e.point.z },
+                    applied: { x: 0, z: 0 },
+                  });
+                }
+              : undefined
+          }
+        />
+      ))}
+
+      {editable && selectedResource && (
+        <mesh
+          position={[
+            selectedResource.rect.x + selectedResource.rect.w,
+            0.35,
+            selectedResource.rect.z + selectedResource.rect.d,
+          ]}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            beginDrag({
+              kind: 'resize',
+              id: selectedResource.id,
+              min: { x: selectedResource.rect.x, z: selectedResource.rect.z },
+              last: null,
+            });
+          }}
+        >
+          <boxGeometry args={[0.9, 0.6, 0.9]} />
+          <meshBasicMaterial color="#ffffff" />
+        </mesh>
+      )}
+
+      {previewRect && (
+        <mesh
+          position={[
+            previewRect.x + Math.max(previewRect.w, 0.1) / 2,
+            0.15,
+            previewRect.z + Math.max(previewRect.d, 0.1) / 2,
+          ]}
+        >
+          <boxGeometry args={[Math.max(previewRect.w, 0.1), 0.3, Math.max(previewRect.d, 0.1)]} />
+          <meshBasicMaterial
+            color={pendingAdd === 'connector' ? '#e8c34a' : '#7aa2ff'}
+            transparent
+            opacity={0.35}
+          />
+        </mesh>
+      )}
+
+      <GatePillars />
+      <Stands />
+
+      {moves.map((m) => (
+        <group key={m.id}>
+          <PathLine scene={scene} move={m} selected={m.id === selectedMoveId} />
+          <MoveActors scene={scene} move={m} t={playhead} />
+        </group>
+      ))}
+
+      {selectedMove &&
+        selectedMove.path.map((p, i) => (
+          <mesh
+            key={i}
+            position={[p.x, 0.6, p.z]}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              beginDrag({ kind: 'waypoint', moveId: selectedMove.id, index: i, last: null });
+            }}
+          >
+            <sphereGeometry args={[0.6, 12, 12]} />
+            <meshStandardMaterial color="#ffffff" transparent opacity={0.9} />
+          </mesh>
+        ))}
+
+      {draftPath.length > 0 && (
+        <group>
+          {draftPath.length >= 2 && (
+            <Line
+              points={draftPath.map((p) => new Vector3(p.x, 0.6, p.z))}
+              color="#ffffff"
+              lineWidth={3}
+            />
+          )}
+          {draftPath.map((p, i) => (
+            <mesh key={i} position={[p.x, 0.6, p.z]}>
+              <sphereGeometry args={[0.5, 10, 10]} />
+              <meshStandardMaterial color="#ffffff" />
+            </mesh>
+          ))}
+        </group>
+      )}
+    </group>
+  );
+}
+
+export default function Viewport3D({
+  conflicts,
+  violations = [],
+}: {
+  conflicts: Conflict[];
+  violations?: RuleViolation[];
+}) {
+  const viewMode = useVisSim((s) => s.viewMode);
+  const pendingAdd = useVisSim((s) => s.pendingAdd);
+
+  return (
+    <Canvas shadows={false} style={{ cursor: pendingAdd ? 'crosshair' : 'default' }}>
       <color attach="background" args={['#161a24']} />
       <ambientLight intensity={0.7} />
       <directionalLight position={[30, 50, 20]} intensity={1.1} />
@@ -223,51 +529,7 @@ export default function Viewport3D({
         <OrthographicCamera makeDefault position={[90, 90, 90]} zoom={6} near={0.1} far={600} />
       )}
 
-      <mesh
-        ref={groundRef}
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0, 4]}
-        onClick={onGroundClick}
-      >
-        <planeGeometry args={[130, 90]} />
-        <meshStandardMaterial color="#232939" />
-      </mesh>
-
-      {scene.resources.map((r) => (
-        <ResourceMesh
-          key={r.id}
-          scene={scene}
-          resource={r}
-          conflictActive={activeConflictResourceIds.has(r.id)}
-        />
-      ))}
-      <GatePillars />
-      <Stands />
-
-      {moves.map((m) => (
-        <group key={m.id}>
-          <PathLine scene={scene} move={m} selected={m.id === selectedMoveId} />
-          <MoveActors scene={scene} move={m} t={playhead} />
-        </group>
-      ))}
-
-      {draftPath.length > 0 && (
-        <group>
-          {draftPath.length >= 2 && (
-            <Line
-              points={draftPath.map((p) => new Vector3(p.x, 0.6, p.z))}
-              color="#ffffff"
-              lineWidth={3}
-            />
-          )}
-          {draftPath.map((p, i) => (
-            <mesh key={i} position={[p.x, 0.6, p.z]}>
-              <sphereGeometry args={[0.5, 10, 10]} />
-              <meshStandardMaterial color="#ffffff" />
-            </mesh>
-          ))}
-        </group>
-      )}
+      <SceneBody conflicts={conflicts} violations={violations} />
 
       <OrbitControls
         key={viewMode}
