@@ -139,6 +139,10 @@ export default function Timeline({ conflicts }: { conflicts: Conflict[] }) {
                   background: team?.color ?? '#888',
                 }}
                 onPointerDown={(e) => onBarPointerDown(e, m.id)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setPlayhead(m.tStart);
+                }}
                 title={`${m.name}  ${fmtTime(m.tStart)}–${fmtTime(m.tEnd)} — drag to retime`}
               >
                 <span className="bar-time">
@@ -162,6 +166,12 @@ export default function Timeline({ conflicts }: { conflicts: Conflict[] }) {
                   style={{
                     left: `${pct(c.t0)}%`,
                     width: `${Math.max(0.4, pct(c.t1) - pct(c.t0))}%`,
+                    pointerEvents: 'auto',
+                    cursor: 'pointer',
+                  }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    setPlayhead(c.t0);
                   }}
                   title={`Conflict ${fmtTime(c.t0)}–${fmtTime(c.t1)}`}
                 />
@@ -169,7 +179,25 @@ export default function Timeline({ conflicts }: { conflicts: Conflict[] }) {
             </div>
           );
         })}
-        <div className="playhead" style={{ left: `${pct(playhead)}%` }} />
+        <div className="playhead" style={{ left: `${pct(playhead)}%` }}>
+          <span
+            style={{
+              position: 'absolute',
+              top: 0,
+              transform: 'translateX(-50%)',
+              background: '#ff4d6d',
+              color: '#0d1017',
+              fontSize: 10,
+              fontWeight: 700,
+              padding: '0 4px',
+              borderRadius: 3,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {fmtTime(playhead)}
+          </span>
+        </div>
       </div>
     </div>
   );
