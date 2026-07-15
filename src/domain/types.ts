@@ -113,6 +113,18 @@ export interface RuleViolation {
   otherMoveId?: string;
 }
 
+export type BlockKind = 'wall' | 'pillar' | 'box' | 'slab';
+
+/** A passive structural element rendered for visual context. Not reservable. */
+export interface Block {
+  id: string;
+  kind: BlockKind;
+  rect: Rect; // footprint
+  height: number; // extrusion height
+  y?: number; // base elevation, default 0
+  color?: string; // default per-kind in renderer
+}
+
 /**
  * A complete scene definition: the spatial + organizational context a plan
  * runs against. Data, not globals — the app must support many scenes (plan §4.1).
@@ -127,4 +139,6 @@ export interface SceneDef {
   dayEnd: number;
   /** Optional data-driven rules evaluated against derived reservations (plan §4.3). */
   rules?: Rule[];
+  /** Passive structure for visual context; blocks are not reservable. */
+  blocks?: Block[];
 }

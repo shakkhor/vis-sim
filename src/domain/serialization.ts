@@ -1,7 +1,19 @@
 // Versioned JSON serialization for plans + scenes. Pure data in/out — no app state,
 // no rendering concerns. Validation is hand-rolled (no schema dependency) and reports
 // the first offending field path via SerializationError.
-import type { ActorKind, Move, Rect, Resource, ResourceKind, SceneDef, Team, Vec2 } from './types';
+import type {
+  ActorKind,
+  Block,
+  BlockKind,
+  Move,
+  Rect,
+  Resource,
+  ResourceKind,
+  Rule,
+  SceneDef,
+  Team,
+  Vec2,
+} from './types';
 
 export const PLAN_FORMAT_VERSION = 1 as const;
 
@@ -28,6 +40,8 @@ export class SerializationError extends Error {
 
 const ACTOR_KINDS: readonly ActorKind[] = ['cohort', 'staff', 'vehicle', 'material'];
 const RESOURCE_KINDS: readonly ResourceKind[] = ['zone', 'connector'];
+const RULE_KINDS = ['forbidden-entry', 'separation'] as const;
+const BLOCK_KINDS: readonly BlockKind[] = ['wall', 'pillar', 'box', 'slab'];
 
 export function serializePlan(doc: PlanDocument): string {
   return JSON.stringify(doc, null, 2);
@@ -88,7 +102,7 @@ function parseMeta(value: unknown): PlanDocumentMeta {
 
 function parseScene(value: unknown): SceneDef {
   const scene = asRecord(value, 'scene');
-  return {
+  const parsed: SceneDef = {
     id: asString(scene.id, 'scene.id'),
     name: asString(scene.name, 'scene.name'),
     authorTeamId: asString(scene.authorTeamId, 'scene.authorTeamId'),
@@ -101,6 +115,62 @@ function parseScene(value: unknown): SceneDef {
       parseResource(resource, `scene.resources[${i}]`),
     ),
   };
+  if (scene.rules !== undefined) {
+    parsed.rules = asArray(scene.rules, 'scene.rules').map((rule, i) =>
+      parseRule(rule, `scene.rules[${i}]`),
+    );
+  }
+  if (scene.blocks !== undefined) {
+    parsed.blocks = asArray(scene.blocks, 'scene.blocks').map((block, i) =>
+      parseBlock(block, `scene.blocks[${i}]`),
+    );
+  }
+  return parsed;
+}
+
+function parseRule(value: unknown, path: string): Rule {
+  const rule = asRecord(value, path);
+  const kind = asOneOf(rule.kind, RULE_KINDS, `${path}.kind`);
+  const base = {
+    id: asString(rule.id, `${path}.id`),
+    description: asString(rule.description, `${path}.description`),
+    resourceTags: asStringArray(rule.resourceTags, `${path}.resourceTags`),
+  };
+  if (kind === 'forbidden-entry') {
+    return {
+      ...base,
+      kind,
+      actorKinds: asArray(rule.actorKinds, `${path}.actorKinds`).map((actorKind, i) =>
+        asOneOf(actorKind, ACTOR_KINDS, `${path}.actorKinds[${i}]`),
+      ),
+    };
+  }
+  return {
+    ...base,
+    kind,
+    teamIdsA: asStringArray(rule.teamIdsA, `${path}.teamIdsA`),
+    teamIdsB: asStringArray(rule.teamIdsB, `${path}.teamIdsB`),
+  };
+}
+
+function parseBlock(value: unknown, path: string): Block {
+  const block = asRecord(value, path);
+  const parsed: Block = {
+    id: asString(block.id, `${path}.id`),
+    kind: asOneOf(block.kind, BLOCK_KINDS, `${path}.kind`),
+    rect: parseRect(block.rect, `${path}.rect`),
+    height: asFiniteNumber(block.height, `${path}.height`),
+  };
+  if (parsed.height <= 0) {
+    throw new SerializationError(`${path}.height: expected positive height, got ${parsed.height}`);
+  }
+  if (block.y !== undefined) {
+    parsed.y = asFiniteNumber(block.y, `${path}.y`);
+  }
+  if (block.color !== undefined) {
+    parsed.color = asString(block.color, `${path}.color`);
+  }
+  return parsed;
 }
 
 function parseTeam(value: unknown, path: string): Team {
@@ -213,6 +283,10 @@ function asArray(value: unknown, path: string): unknown[] {
 function asString(value: unknown, path: string): string {
   if (typeof value !== 'string') fail(path, 'string', value);
   return value;
+}
+
+function asStringArray(value: unknown, path: string): string[] {
+  return asArray(value, path).map((item, i) => asString(item, `${path}[${i}]`));
 }
 
 function asFiniteNumber(value: unknown, path: string): number {

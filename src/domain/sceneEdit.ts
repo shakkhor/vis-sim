@@ -125,3 +125,63 @@ export function makeResourceId(scene: SceneDef, kind: ResourceKind): string {
   while (used.has(`${kind}-${n}`)) n++;
   return `${kind}-${n}`;
 }
+
+/**
+ * Copy a resource under a freshly generated id, name suffixed ' copy', and the
+ * footprint offset by +2/+2 (snapped). Throws on unknown id.
+ */
+export function duplicateResource(scene: SceneDef, resourceId: string): SceneDef {
+  const source = mustFindResource(scene, resourceId);
+  const copy: Resource = {
+    ...source,
+    id: makeResourceId(scene, source.kind),
+    name: `${source.name} copy`,
+    rect: snapRect({ ...source.rect, x: source.rect.x + 2, z: source.rect.z + 2 }),
+    ownerTeamIds: [...source.ownerTeamIds],
+    ...(source.tags !== undefined ? { tags: [...source.tags] } : {}),
+  };
+  return { ...scene, resources: [...scene.resources, copy] };
+}
+
+/**
+ * Grid-snap `rect`, then magnetically snap its edges to the nearest edges of
+ * other resources within `threshold` world units. Both min and max edges are
+ * candidates on both axes; the rect is translated (never resized), at most once
+ * per axis (nearest candidate wins). `movingId` names the resource being
+ * dragged so its own edges are ignored (`null` = new rect, exclude nothing).
+ * `guides` reports the neighbor edge lines that were snapped to, for rendering.
+ */
+export function snapRectToNeighbors(
+  resources: Resource[],
+  movingId: string | null,
+  rect: Rect,
+  threshold = 1,
+): { rect: Rect; guides: Array<{ axis: 'x' | 'z'; value: number }> } {
+  const snapped = snapRect(rect);
+  const neighbors = resources.filter((r) => r.id !== movingId);
+  const result: Rect = { ...snapped };
+  const guides: Array<{ axis: 'x' | 'z'; value: number }> = [];
+
+  for (const axis of ['x', 'z'] as const) {
+    const sizeKey = axis === 'x' ? 'w' : 'd';
+    const movingEdges = [snapped[axis], snapped[axis] + snapped[sizeKey]];
+    let best: { delta: number; value: number; dist: number } | null = null;
+    for (const neighbor of neighbors) {
+      const edges = [neighbor.rect[axis], neighbor.rect[axis] + neighbor.rect[sizeKey]];
+      for (const edge of edges) {
+        for (const movingEdge of movingEdges) {
+          const dist = Math.abs(edge - movingEdge);
+          if (dist <= threshold && (best === null || dist < best.dist)) {
+            best = { delta: edge - movingEdge, value: edge, dist };
+          }
+        }
+      }
+    }
+    if (best !== null) {
+      result[axis] = snapped[axis] + best.delta;
+      guides.push({ axis, value: best.value });
+    }
+  }
+
+  return { rect: result, guides };
+}

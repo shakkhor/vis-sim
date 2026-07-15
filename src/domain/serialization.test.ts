@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { INITIAL_MOVES, SAMPLE_SCENE } from './sampleScene';
 import { deserializePlan, SerializationError, serializePlan } from './serialization';
 import type { PlanDocument } from './serialization';
+import type { Block, Rule } from './types';
 
 const baseDoc: PlanDocument = {
   formatVersion: 1,
@@ -40,6 +41,58 @@ describe('round-trip', () => {
     const restored = deserializePlan(json);
     expect(restored.scene.resources[0].tags).toEqual(['clean', 'indoor']);
     expect(restored.scene.resources[1].tags).toBeUndefined();
+  });
+
+  it('round-trips scene rules of both kinds and omits the key when absent', () => {
+    const rules: Rule[] = [
+      {
+        id: 'rule-1',
+        description: 'No vehicles in clean zones',
+        kind: 'forbidden-entry',
+        actorKinds: ['vehicle', 'material'],
+        resourceTags: ['clean'],
+      },
+      {
+        id: 'rule-2',
+        description: 'Waste and clean flows never share sterile space',
+        kind: 'separation',
+        teamIdsA: [SAMPLE_SCENE.teams[0].id],
+        teamIdsB: [SAMPLE_SCENE.teams[1].id],
+        resourceTags: ['sterile'],
+      },
+    ];
+    const json = mutated((doc) => {
+      doc.scene.rules = rules;
+    });
+    const restored = deserializePlan(json);
+    expect(restored.scene.rules).toEqual(rules);
+
+    const bare = deserializePlan(mutated((doc) => delete doc.scene.rules));
+    expect('rules' in bare.scene).toBe(false);
+  });
+
+  it('round-trips scene blocks including optional y/color and omits absent optionals', () => {
+    const blocks: Block[] = [
+      { id: 'block-1', kind: 'wall', rect: { x: 0, z: 0, w: 10, d: 0.5 }, height: 3 },
+      {
+        id: 'block-2',
+        kind: 'slab',
+        rect: { x: 2, z: 2, w: 4, d: 4 },
+        height: 0.2,
+        y: 3,
+        color: '#8899aa',
+      },
+    ];
+    const json = mutated((doc) => {
+      doc.scene.blocks = blocks;
+    });
+    const restored = deserializePlan(json);
+    expect(restored.scene.blocks).toEqual(blocks);
+    expect(restored.scene.blocks?.[0]).not.toHaveProperty('y');
+    expect(restored.scene.blocks?.[0]).not.toHaveProperty('color');
+
+    const bare = deserializePlan(mutated((doc) => delete doc.scene.blocks));
+    expect('blocks' in bare.scene).toBe(false);
   });
 });
 
@@ -161,6 +214,91 @@ describe('structural validation', () => {
       loosen(doc.meta).name = 42;
     });
     expect(() => deserializePlan(json)).toThrow(/meta\.name: expected string/);
+  });
+
+  it('rejects an unknown rule kind', () => {
+    const json = mutated((doc) => {
+      loosen(doc.scene).rules = [
+        { id: 'rule-1', description: 'bad', kind: 'curfew', resourceTags: [] },
+      ];
+    });
+    expect(() => deserializePlan(json)).toThrow(SerializationError);
+    expect(() => deserializePlan(json)).toThrow(
+      /scene\.rules\[0\]\.kind: expected one of forbidden-entry \| separation/,
+    );
+  });
+
+  it('rejects a forbidden-entry rule with a bad actor kind', () => {
+    const json = mutated((doc) => {
+      loosen(doc.scene).rules = [
+        {
+          id: 'rule-1',
+          description: 'bad',
+          kind: 'forbidden-entry',
+          actorKinds: ['vehicle', 'drone'],
+          resourceTags: ['clean'],
+        },
+      ];
+    });
+    expect(() => deserializePlan(json)).toThrow(
+      /scene\.rules\[0\]\.actorKinds\[1\]: expected one of/,
+    );
+  });
+
+  it('rejects a separation rule missing its team lists', () => {
+    const json = mutated((doc) => {
+      loosen(doc.scene).rules = [
+        { id: 'rule-1', description: 'bad', kind: 'separation', resourceTags: [] },
+      ];
+    });
+    expect(() => deserializePlan(json)).toThrow(/scene\.rules\[0\]\.teamIdsA: expected array/);
+  });
+
+  it('rejects non-array rules', () => {
+    const json = mutated((doc) => {
+      loosen(doc.scene).rules = 'no-rules';
+    });
+    expect(() => deserializePlan(json)).toThrow(/scene\.rules: expected array/);
+  });
+
+  it('rejects a block with a non-positive height', () => {
+    const json = mutated((doc) => {
+      loosen(doc.scene).blocks = [
+        { id: 'block-1', kind: 'wall', rect: { x: 0, z: 0, w: 10, d: 0.5 }, height: 0 },
+      ];
+    });
+    expect(() => deserializePlan(json)).toThrow(SerializationError);
+    expect(() => deserializePlan(json)).toThrow(
+      /scene\.blocks\[0\]\.height: expected positive height/,
+    );
+  });
+
+  it('rejects a block with an unknown kind', () => {
+    const json = mutated((doc) => {
+      loosen(doc.scene).blocks = [
+        { id: 'block-1', kind: 'ramp', rect: { x: 0, z: 0, w: 2, d: 2 }, height: 1 },
+      ];
+    });
+    expect(() => deserializePlan(json)).toThrow(
+      /scene\.blocks\[0\]\.kind: expected one of wall \| pillar \| box \| slab/,
+    );
+  });
+
+  it('rejects a block whose rect has a non-positive size', () => {
+    const json = mutated((doc) => {
+      loosen(doc.scene).blocks = [
+        { id: 'block-1', kind: 'box', rect: { x: 0, z: 0, w: -2, d: 2 }, height: 1 },
+      ];
+    });
+    expect(() => deserializePlan(json)).toThrow(/scene\.blocks\[0\]\.rect\.w: expected positive/);
+  });
+
+  it('rejects non-array blocks', () => {
+    const json = mutated((doc) => {
+      loosen(doc.scene).blocks = { 'block-1': {} };
+    });
+    expect(() => deserializePlan(json)).toThrow(SerializationError);
+    expect(() => deserializePlan(json)).toThrow(/scene\.blocks: expected array/);
   });
 });
 

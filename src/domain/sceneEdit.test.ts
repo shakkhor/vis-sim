@@ -3,6 +3,7 @@ import { resourceById, teamById } from './scene';
 import {
   GRID,
   addResource,
+  duplicateResource,
   makeResourceId,
   moveResource,
   moveWaypoint,
@@ -10,9 +11,10 @@ import {
   resizeResource,
   snap,
   snapRect,
+  snapRectToNeighbors,
   updateResourceMeta,
 } from './sceneEdit';
-import type { Move, Resource, SceneDef } from './types';
+import type { Move, Rect, Resource, SceneDef } from './types';
 
 function makeScene(): SceneDef {
   return {
@@ -235,6 +237,145 @@ describe('makeResourceId', () => {
     });
     expect(makeResourceId(scene, 'zone')).toBe('zone-3');
     expect(makeResourceId({ ...scene, resources: [] }, 'zone')).toBe('zone-1');
+  });
+});
+
+describe('duplicateResource', () => {
+  it('appends a copy with a generated id, " copy" name, and rect offset by +2/+2', () => {
+    const next = expectImmutable((s) => duplicateResource(s, 'zone-1'));
+    expect(next.resources).toHaveLength(3);
+    const copy = resourceById(next, 'zone-2');
+    expect(copy).toBeDefined();
+    expect(copy?.name).toBe('Staging copy');
+    expect(copy?.kind).toBe('zone');
+    expect(copy?.rect).toEqual({ x: 2, z: 2, w: 4, d: 4 });
+    expect(copy?.ownerTeamIds).toEqual(['team-ops']);
+  });
+
+  it('deep-copies ownerTeamIds and tags so the copy shares no arrays with the source', () => {
+    const scene = makeScene();
+    const next = duplicateResource(scene, 'connector-1');
+    const source = resourceById(next, 'connector-1');
+    const copy = resourceById(next, 'connector-2');
+    expect(copy?.tags).toEqual(['gate']);
+    expect(copy?.tags).not.toBe(source?.tags);
+    expect(copy?.ownerTeamIds).not.toBe(source?.ownerTeamIds);
+  });
+
+  it('snaps the offset rect to the grid', () => {
+    let scene = makeScene();
+    scene = addResource(scene, {
+      id: 'zone-2',
+      name: 'Offgrid',
+      kind: 'zone',
+      rect: { x: 0.5, z: 0.5, w: 2.5, d: 2 },
+      ownerTeamIds: [],
+    });
+    const next = duplicateResource(scene, 'zone-2');
+    expect(resourceById(next, 'zone-3')?.rect).toEqual({ x: 2.5, z: 2.5, w: 2.5, d: 2 });
+  });
+
+  it('throws naming an unknown resource id', () => {
+    expect(() => duplicateResource(makeScene(), 'zone-77')).toThrow(/zone-77/);
+  });
+});
+
+describe('snapRectToNeighbors', () => {
+  // makeScene neighbors: zone-1 x∈[0,4] z∈[0,4]; connector-1 x∈[6,8] z∈[0,4].
+  const bare = (id: string, rect: Rect): Resource => ({
+    id,
+    name: id,
+    kind: 'zone',
+    rect,
+    ownerTeamIds: [],
+  });
+
+  it('snaps the min edge to a nearby neighbor edge and reports a guide', () => {
+    const { rect, guides } = snapRectToNeighbors(
+      makeScene().resources,
+      null,
+      { x: 4.3, z: 20, w: 2, d: 2 }, // grid-snaps to x=4.5, then edge 4.5 → 4
+    );
+    expect(rect).toEqual({ x: 4, z: 20, w: 2, d: 2 });
+    expect(guides).toEqual([{ axis: 'x', value: 4 }]);
+  });
+
+  it('snaps the max edge too (rect translated, never resized)', () => {
+    const { rect, guides } = snapRectToNeighbors(
+      makeScene().resources,
+      null,
+      { x: -2.7, z: 20, w: 2, d: 2 }, // grid-snaps to x=-2.5, max edge -0.5 → 0
+    );
+    expect(rect).toEqual({ x: -2, z: 20, w: 2, d: 2 });
+    expect(guides).toEqual([{ axis: 'x', value: 0 }]);
+  });
+
+  it('snaps both axes independently with one guide per axis', () => {
+    const { rect, guides } = snapRectToNeighbors(makeScene().resources, null, {
+      x: 4.3,
+      z: 3.7,
+      w: 2,
+      d: 2,
+    });
+    expect(rect).toEqual({ x: 4, z: 4, w: 2, d: 2 });
+    expect(guides).toContainEqual({ axis: 'x', value: 4 });
+    expect(guides).toContainEqual({ axis: 'z', value: 4 });
+    expect(guides).toHaveLength(2);
+  });
+
+  it('the nearest candidate wins when several edges are in range', () => {
+    const neighbors = [
+      bare('a', { x: 0, z: 0, w: 9.75, d: 2 }),
+      bare('b', { x: 10, z: 0, w: 5, d: 2 }),
+    ];
+    const { rect, guides } = snapRectToNeighbors(neighbors, null, { x: 9.5, z: 20, w: 2, d: 2 });
+    // min edge 9.5 is 0.25 from a's max edge (9.75) and 0.5 from b's min edge (10).
+    expect(rect.x).toBe(9.75);
+    expect(guides).toEqual([{ axis: 'x', value: 9.75 }]);
+  });
+
+  it('excludes the moving resource from the neighbor set', () => {
+    const only = [bare('solo', { x: 0, z: 0, w: 4, d: 4 })];
+    const { rect, guides } = snapRectToNeighbors(only, 'solo', { x: 4.3, z: 0, w: 2, d: 2 });
+    expect(rect).toEqual({ x: 4.5, z: 0, w: 2, d: 2 }); // grid snap only
+    expect(guides).toEqual([]);
+  });
+
+  it('null movingId excludes nothing', () => {
+    const only = [bare('solo', { x: 0, z: 0, w: 4, d: 4 })];
+    const { rect } = snapRectToNeighbors(only, null, { x: 4.3, z: 0, w: 2, d: 2 });
+    expect(rect.x).toBe(4);
+  });
+
+  it('leaves the rect grid-snapped when no edge is within the threshold', () => {
+    const { rect, guides } = snapRectToNeighbors(
+      makeScene().resources,
+      null,
+      { x: 4.3, z: 20, w: 2, d: 2 },
+      0.25, // edge 4.5 is 0.5 away from 4 — out of range
+    );
+    expect(rect).toEqual({ x: 4.5, z: 20, w: 2, d: 2 });
+    expect(guides).toEqual([]);
+  });
+
+  it('reports an alignment guide when an edge already matches exactly', () => {
+    const { rect, guides } = snapRectToNeighbors(makeScene().resources, null, {
+      x: 4,
+      z: 20,
+      w: 2,
+      d: 2,
+    });
+    expect(rect).toEqual({ x: 4, z: 20, w: 2, d: 2 });
+    expect(guides).toEqual([{ axis: 'x', value: 4 }]);
+  });
+
+  it('does not mutate the input rect or resources', () => {
+    const resources = makeScene().resources;
+    const snapshot = structuredClone(resources);
+    const input: Rect = { x: 4.3, z: 3.7, w: 2, d: 2 };
+    snapRectToNeighbors(resources, null, input);
+    expect(input).toEqual({ x: 4.3, z: 3.7, w: 2, d: 2 });
+    expect(resources).toEqual(snapshot);
   });
 });
 
