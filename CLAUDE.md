@@ -15,6 +15,7 @@ Spatial operations planning platform. Phase 0 prototype of the flagship loop in
 
 - `src/domain/` — pure TypeScript. Types, the reservation/conflict/approver engine
   (`engine.ts`), data-driven rules (`rules.ts`), scene lookup helpers (`scene.ts`),
+  pure scene-mutation helpers for interactive editing (`sceneEdit.ts`),
   scene content and registry (`sampleScene.ts`, `warehouseScene.ts`, `scenes.ts`),
   plan JSON serialization (`serialization.ts`).
   **No React, no three.js imports allowed here.** Unit tests colocated (`*.test.ts`).

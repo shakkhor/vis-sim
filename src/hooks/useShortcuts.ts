@@ -13,7 +13,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * so the listener registers once and never goes stale.
  *
  * - Space: play/pause
- * - Escape: cancel draw (clear draft, back to select)
+ * - Escape: layered cancel — draw: clear draft + back to select;
+ *   scene: disarm add tool, else clear selection, else back to select (PRD §4)
  * - 1 / 2 / 3: view mode 3d / top / iso
  * - Delete / Backspace: delete selected move
  */
@@ -33,6 +34,15 @@ export function useShortcuts(): void {
           if (state.mode === 'draw') {
             state.clearDraft();
             state.setMode('select');
+          } else if (state.mode === 'scene') {
+            // Layered exit (PRD §4): armed tool → selection → mode.
+            if (state.pendingAdd) {
+              state.setPendingAdd(null);
+            } else if (state.selectedResourceId) {
+              state.selectResource(null);
+            } else {
+              state.setMode('select');
+            }
           }
           break;
         case 'Digit1':
