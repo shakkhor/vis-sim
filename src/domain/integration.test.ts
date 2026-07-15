@@ -1,0 +1,154 @@
+// Integration suite: the complete flagship loop (PRODUCT_PLAN.md §6) at the domain
+// level — ship a plan, see the blocking conflict on the shared connector, see who
+// must approve, resolve by retiming, round-trip through serialization, and confirm
+// the rules engine has nothing to complain about. Runs for both shipped scenes to
+// prove the core is domain-agnostic.
+import { describe, expect, it } from 'vitest';
+import { allReservations, computeConflicts, requiredApproverTeamIds } from './engine';
+import { evaluateRules } from './rules';
+import { INITIAL_MOVES, SAMPLE_SCENE } from './sampleScene';
+import { deserializePlan, serializePlan, PLAN_FORMAT_VERSION } from './serialization';
+import type { PlanDocument } from './serialization';
+import type { Conflict, Move, SceneDef } from './types';
+import { WAREHOUSE_MOVES, WAREHOUSE_SCENE } from './warehouseScene';
+
+/** Everything the loop derives from a (scene, moves) pair. Pure + deterministic. */
+function analyze(scene: SceneDef, moves: Move[]) {
+  const reservations = allReservations(moves, scene.resources);
+  const conflicts = computeConflicts(reservations, scene.resources, moves);
+  return {
+    reservations,
+    conflicts,
+    blocking: conflicts.filter((c) => c.blocking),
+    approvers: requiredApproverTeamIds(reservations, scene.resources, scene.authorTeamId),
+  };
+}
+
+/** Retime one move, leaving path/actor/team untouched — the canonical resolution edit. */
+function retime(moves: Move[], moveId: string, tStart: number, tEnd: number): Move[] {
+  return moves.map((m) => (m.id === moveId ? { ...m, tStart, tEnd } : m));
+}
+
+interface LoopScenario {
+  title: string;
+  scene: SceneDef;
+  shippedMoves: Move[];
+  connectorId: string;
+  /** The two moves expected to collide on the connector (order-independent). */
+  collidingMoveIds: [string, string];
+  expectedApprovers: string[];
+  /** The resolution: retime this move to [tStart, tEnd]. */
+  retimedMoveId: string;
+  retimedWindow: [number, number];
+}
+
+const SCENARIOS: LoopScenario[] = [
+  {
+    title: 'stadium — Gate 7 slice',
+    scene: SAMPLE_SCENE,
+    shippedMoves: INITIAL_MOVES,
+    connectorId: 'gate7',
+    collidingMoveIds: ['ingressD', 'fnbRestock'],
+    // Reservations touch plaza (security), gate7 (blockC+blockD), dconc (blockD),
+    // fnbstore + kioskd (fnb); author blockD is excluded.
+    expectedApprovers: ['blockC', 'fnb', 'security'],
+    // Ingress holds Gate 7 ~13:43–14:01; pushing the restock to 15:00–15:30 clears it.
+    retimedMoveId: 'fnbRestock',
+    retimedWindow: [900, 930],
+  },
+  {
+    title: 'warehouse — Aisle mouth slice',
+    scene: WAREHOUSE_SCENE,
+    shippedMoves: WAREHOUSE_MOVES,
+    connectorId: 'aisleMouth',
+    collidingMoveIds: ['putaway', 'picking'],
+    // Reservations touch dock1 + staging (inbound), aisleMouth (inbound+outbound),
+    // racking (maintenance), dock2 (outbound), walkway (safety); author inbound excluded.
+    expectedApprovers: ['maintenance', 'outbound', 'safety'],
+    // Putaway holds the aisle mouth ~09:26–09:32 and the racking aisle ~09:35–10:00.
+    // Retimed to 10:10–11:10, picking holds the aisle mouth ~10:39–10:47 (clear of
+    // putaway by >1h) and the racking aisle 10:10–~10:36 (putaway left it at 10:00).
+    retimedMoveId: 'picking',
+    retimedWindow: [610, 670],
+  },
+];
+
+function expectSameConflictPair(conflict: Conflict, moveIds: [string, string]): void {
+  expect([conflict.moveAId, conflict.moveBId].sort()).toEqual([...moveIds].sort());
+}
+
+for (const scenario of SCENARIOS) {
+  const {
+    title,
+    scene,
+    shippedMoves,
+    connectorId,
+    collidingMoveIds,
+    expectedApprovers,
+    retimedMoveId,
+    retimedWindow,
+  } = scenario;
+
+  describe(`flagship loop — ${title}`, () => {
+    const shipped = analyze(scene, shippedMoves);
+    const resolvedMoves = retime(shippedMoves, retimedMoveId, retimedWindow[0], retimedWindow[1]);
+    const resolved = analyze(scene, resolvedMoves);
+
+    it('ships with exactly one blocking conflict, on the shared connector', () => {
+      expect(shipped.blocking).toHaveLength(1);
+      const conflict = shipped.blocking[0];
+      expect(conflict.resourceId).toBe(connectorId);
+      expect(scene.resources.find((r) => r.id === connectorId)?.kind).toBe('connector');
+      expectSameConflictPair(conflict, collidingMoveIds);
+      expect(conflict.t0).toBeLessThan(conflict.t1);
+    });
+
+    it('requires approval from every touched team except the author', () => {
+      expect(shipped.approvers).toEqual(expectedApprovers);
+      expect(shipped.approvers).not.toContain(scene.authorTeamId);
+    });
+
+    it('retiming the offending move clears blocking conflicts without changing approvers', () => {
+      expect(resolved.blocking).toEqual([]);
+      // Subtle invariant: a pure retime keeps the move on the same path, so it
+      // touches the same resources — the approver set must be byte-for-byte stable.
+      expect(resolved.approvers).toEqual(shipped.approvers);
+    });
+
+    it('round-trips the resolved plan losslessly and reproduces its conflicts', () => {
+      const doc: PlanDocument = {
+        formatVersion: PLAN_FORMAT_VERSION,
+        scene,
+        moves: resolvedMoves,
+        meta: { name: `${scene.name} — resolved`, exportedAt: '2026-07-15T00:00:00.000Z' },
+      };
+      const restored = deserializePlan(serializePlan(doc));
+
+      expect(restored.formatVersion).toBe(PLAN_FORMAT_VERSION);
+      expect(restored.meta).toEqual(doc.meta);
+      expect(restored.moves).toEqual(resolvedMoves);
+      expect(restored.scene.id).toBe(scene.id);
+      expect(restored.scene.name).toBe(scene.name);
+      expect(restored.scene.authorTeamId).toBe(scene.authorTeamId);
+      expect(restored.scene.dayStart).toBe(scene.dayStart);
+      expect(restored.scene.dayEnd).toBe(scene.dayEnd);
+      expect(restored.scene.teams).toEqual(scene.teams);
+      expect(restored.scene.resources).toEqual(scene.resources);
+
+      const reAnalyzed = analyze(restored.scene, restored.moves);
+      expect(reAnalyzed.conflicts).toEqual(resolved.conflicts);
+      expect(reAnalyzed.blocking).toEqual([]);
+      expect(reAnalyzed.approvers).toEqual(resolved.approvers);
+    });
+
+    it('evaluates the scene rules over the resolved plan with zero violations', () => {
+      const violations = evaluateRules(
+        scene.rules ?? [],
+        resolved.reservations,
+        resolvedMoves,
+        scene.resources,
+      );
+      expect(violations).toEqual([]);
+    });
+  });
+}
