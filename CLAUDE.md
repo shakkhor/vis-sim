@@ -14,12 +14,16 @@ Spatial operations planning platform. Phase 0 prototype of the flagship loop in
 ## Architecture (dependency direction: components → state → domain)
 
 - `src/domain/` — pure TypeScript. Types, the reservation/conflict/approver engine
-  (`engine.ts`), scene lookup helpers (`scene.ts`), sample content (`sampleScene.ts`).
+  (`engine.ts`), data-driven rules (`rules.ts`), scene lookup helpers (`scene.ts`),
+  scene content and registry (`sampleScene.ts`, `warehouseScene.ts`, `scenes.ts`),
+  plan JSON serialization (`serialization.ts`).
   **No React, no three.js imports allowed here.** Unit tests colocated (`*.test.ts`).
 - `src/state/` — Zustand store (`store.ts`) and derived-state hooks (`selectors.ts`).
-  Scene data flows through the store; never import `SAMPLE_SCENE` from components.
+  Scene data flows through the store; never import scene constants from components.
 - `src/components/` — React + react-three-fiber. Rendering is a projection of the
   domain model, never a source of truth.
+- `src/hooks/` — cross-cutting React hooks (`useShortcuts.ts` for keyboard shortcuts).
+- `src/export/` — standalone document generation (`briefing.ts`, HTML briefing).
 
 ## Invariants to preserve
 
@@ -38,6 +42,6 @@ Spatial operations planning platform. Phase 0 prototype of the flagship loop in
 
 ## Known limitations (intentional, documented in README)
 
-- Path↔zone intersection is sample-based (240 samples) — replace with segment/rect
-  clipping before supporting thin corridors.
-- Single hardcoded scene; single-user approvals (you act as all reviewers).
+- Single-user approvals (you act as all reviewers).
+- No persistence beyond manual plan JSON export/import.
+- Move timing is choreographed by hand, not computed from actor speeds/distances.
