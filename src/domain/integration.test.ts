@@ -1,10 +1,12 @@
 // Integration suite: the complete flagship loop (PRODUCT_PLAN.md §6) at the domain
 // level — ship a plan, see the blocking conflict on the shared connector, see who
 // must approve, resolve by retiming, round-trip through serialization, and confirm
-// the rules engine has nothing to complain about. Runs for both shipped scenes to
-// prove the core is domain-agnostic.
+// the rules engine has nothing to complain about. The table-driven loop runs for the
+// stadium and warehouse scenes; the pharma scene ships a rule violation instead of a
+// blocking conflict, so it tells the same story in its own violation-centric block.
 import { describe, expect, it } from 'vitest';
 import { allReservations, computeConflicts, requiredApproverTeamIds } from './engine';
+import { PHARMA_MOVES, PHARMA_SCENE } from './pharmaScene';
 import { evaluateRules } from './rules';
 import { INITIAL_MOVES, SAMPLE_SCENE } from './sampleScene';
 import { deserializePlan, serializePlan, PLAN_FORMAT_VERSION } from './serialization';
@@ -152,3 +154,104 @@ for (const scenario of SCENARIOS) {
     });
   });
 }
+
+// The pharma slice inverts the defect: the shipped plan is clean of blocking
+// conflicts, but the waste egress leaves the blender (10:48–10:50) while the
+// dispensed batch is still charging in (10:43–11:00) — a breach of the
+// waste/material separation rule. Here the rules engine, not the conflict
+// engine, is what gates publishing; the loop otherwise reads the same.
+describe('flagship loop — pharma — waste/material separation slice', () => {
+  const scene = PHARMA_SCENE;
+  const shipped = analyze(scene, PHARMA_MOVES);
+  const shippedViolations = evaluateRules(
+    scene.rules ?? [],
+    shipped.reservations,
+    PHARMA_MOVES,
+    scene.resources,
+  );
+  // Resolution: hold the waste egress +30min (11:18–11:58) so it collects from
+  // the blender only after the charge-in releases it at 11:00.
+  const resolvedMoves = retime(PHARMA_MOVES, 'wasteEgress', 678, 718);
+  const resolved = analyze(scene, resolvedMoves);
+  const resolvedViolations = evaluateRules(
+    scene.rules ?? [],
+    resolved.reservations,
+    resolvedMoves,
+    scene.resources,
+  );
+
+  it('ships with zero blocking conflicts but exactly one separation violation', () => {
+    expect(shipped.blocking).toEqual([]);
+
+    expect(shippedViolations).toHaveLength(1);
+    const violation = shippedViolations[0];
+    expect(violation.ruleId).toBe('pharma-waste-material-segregation');
+    expect([violation.moveId, violation.otherMoveId].sort()).toEqual([
+      'dispensedToBlending',
+      'wasteEgress',
+    ]);
+    expect(violation.resourceId).toBe('blending');
+    expect(violation.t0).toBeLessThan(violation.t1);
+    expect(violation.t0).toBeCloseTo(648, 6); // 10:48 — waste enters the blender
+    expect(violation.t1).toBeCloseTo(650, 6); // 10:50 — waste leaves for corridor-1
+
+    // QA's line clearance crosses blending during production's settle-in: a
+    // cross-team zone overlap, so a warning — never a blocker.
+    const warning = shipped.conflicts.find(
+      (c) =>
+        !c.blocking &&
+        c.resourceId === 'blending' &&
+        [c.moveAId, c.moveBId].sort().join('|') === 'gowningToBlending|qaLineClearance',
+    );
+    expect(warning).toBeDefined();
+  });
+
+  it('requires approval from materials, qa and waste — never the authoring team', () => {
+    expect(shipped.approvers).toEqual(['materials', 'qa', 'waste']);
+    expect(shipped.approvers).not.toContain(scene.authorTeamId);
+  });
+
+  it('retiming the waste egress clears the violation without changing approvers', () => {
+    expect(resolvedViolations).toEqual([]);
+    expect(resolved.blocking).toEqual([]);
+    // A pure retime keeps the move on the same path, so it touches the same
+    // resources — the approver set must be byte-for-byte stable.
+    expect(resolved.approvers).toEqual(shipped.approvers);
+    expect(resolved.approvers).toEqual(['materials', 'qa', 'waste']);
+  });
+
+  it('round-trips the resolved plan losslessly and still evaluates to zero violations', () => {
+    const doc: PlanDocument = {
+      formatVersion: PLAN_FORMAT_VERSION,
+      scene,
+      moves: resolvedMoves,
+      meta: { name: `${scene.name} — resolved`, exportedAt: '2026-07-15T00:00:00.000Z' },
+    };
+    const restored = deserializePlan(serializePlan(doc));
+
+    expect(restored.formatVersion).toBe(PLAN_FORMAT_VERSION);
+    expect(restored.meta).toEqual(doc.meta);
+    expect(restored.moves).toEqual(resolvedMoves);
+    expect(restored.scene.id).toBe(scene.id);
+    expect(restored.scene.name).toBe(scene.name);
+    expect(restored.scene.authorTeamId).toBe(scene.authorTeamId);
+    expect(restored.scene.dayStart).toBe(scene.dayStart);
+    expect(restored.scene.dayEnd).toBe(scene.dayEnd);
+    expect(restored.scene.teams).toEqual(scene.teams);
+    expect(restored.scene.resources).toEqual(scene.resources);
+
+    const reAnalyzed = analyze(restored.scene, restored.moves);
+    expect(reAnalyzed.blocking).toEqual([]);
+    expect(reAnalyzed.approvers).toEqual(resolved.approvers);
+    // Rules are not part of the wire format (deserializePlan rebuilds the scene
+    // without them), so evaluate the scene's authoritative rule set against the
+    // restored geometry and moves.
+    const reViolations = evaluateRules(
+      scene.rules ?? [],
+      reAnalyzed.reservations,
+      restored.moves,
+      restored.scene.resources,
+    );
+    expect(reViolations).toEqual([]);
+  });
+});
