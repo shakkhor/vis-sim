@@ -11,7 +11,7 @@ import { Vector3 } from 'three';
 import { useVisSim } from '../state/store';
 import { teamColor } from '../domain/scene';
 import { actorPositions } from '../domain/actors';
-import type { Conflict, Move, Resource, SceneDef } from '../domain/types';
+import type { Conflict, Move, Resource, RuleViolation, SceneDef } from '../domain/types';
 
 function ResourceMesh({
   scene,
@@ -41,7 +41,27 @@ function ResourceMesh({
         </mesh>
       )}
       <Html center distanceFactor={90} position={[0, 1.4, 0]} style={{ pointerEvents: 'none' }}>
-        <div className="zone-label">{resource.name}</div>
+        <div className="zone-label">
+          {resource.name}
+          {resource.tags && resource.tags.length > 0 && (
+            <div>
+              {resource.tags.map((tag) => (
+                <span
+                  key={tag}
+                  style={{
+                    fontSize: 9,
+                    background: 'rgba(232,195,74,0.25)',
+                    borderRadius: 6,
+                    padding: '0 5px',
+                    marginRight: 3,
+                  }}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </Html>
     </group>
   );
@@ -147,7 +167,13 @@ function Playback() {
   return null;
 }
 
-export default function Viewport3D({ conflicts }: { conflicts: Conflict[] }) {
+export default function Viewport3D({
+  conflicts,
+  violations = [],
+}: {
+  conflicts: Conflict[];
+  violations?: RuleViolation[];
+}) {
   const scene = useVisSim((s) => s.scene);
   const moves = useVisSim((s) => s.moves);
   const playhead = useVisSim((s) => s.playhead);
@@ -158,13 +184,15 @@ export default function Viewport3D({ conflicts }: { conflicts: Conflict[] }) {
   const selectedMoveId = useVisSim((s) => s.selectedMoveId);
   const groundRef = useRef(null);
 
-  const activeConflictResourceIds = useMemo(
-    () =>
-      new Set(
-        conflicts.filter((c) => playhead >= c.t0 && playhead <= c.t1).map((c) => c.resourceId),
-      ),
-    [conflicts, playhead],
-  );
+  const activeConflictResourceIds = useMemo(() => {
+    const ids = new Set(
+      conflicts.filter((c) => playhead >= c.t0 && playhead <= c.t1).map((c) => c.resourceId),
+    );
+    for (const v of violations) {
+      if (playhead >= v.t0 && playhead <= v.t1) ids.add(v.resourceId);
+    }
+    return ids;
+  }, [conflicts, violations, playhead]);
 
   const onGroundClick = (e: ThreeEvent<MouseEvent>) => {
     if (mode !== 'draw') return;
