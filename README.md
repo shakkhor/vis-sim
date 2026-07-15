@@ -16,32 +16,38 @@ npm run build    # typecheck + production build
 
 ## What the prototype demonstrates
 
-The default scene is a stadium slice: South Plaza → **Gate 7** (shared by Block C and Block D)
-→ the two concourses, plus F&B store and kiosk. A **scene switcher** dropdown also offers a
-warehouse scene with a pedestrian-only walkway.
+The default scene is a pharma plant: gowning and material airlocks feeding a **Grade C
+corridor**, a **Grade B filling suite**, and a segregated waste route. A **scene switcher**
+dropdown still offers the stadium slice (South Plaza → Gate 7 → concourses) and the warehouse
+scene with a pedestrian-only walkway.
 
-1. Press **Play**. Three preloaded moves animate: Block D spectator ingress, an F&B restock
-   cart, and a security plaza sweep.
-2. The F&B cart crosses Gate 7 while the ingress cohort occupies it → a **blocking conflict**
+1. Press **Play** on the pharma plan. When the waste egress crosses the material ingress path
+   in the Grade C corridor, the **separation rule** fires — retime the waste egress on the
+   timeline to clear it, watch approvals derive (QA, Materials, Waste, and Maintenance if
+   touched), then **Publish** and generate the **briefing pack**.
+2. **Switch to the stadium scene** to see the classic conflict story: press Play and three
+   preloaded moves animate — Block D spectator ingress, an F&B restock cart, and a security
+   plaza sweep.
+3. The F&B cart crosses Gate 7 while the ingress cohort occupies it → a **blocking conflict**
    is detected automatically (red band on the timeline, red flash on the gate).
-3. **Drag the F&B bar** on the timeline to after the ingress clears — the conflict disappears.
-4. The **Approvals** panel shows the auto-derived approvers (Block C, Security, F&B — every
+4. **Drag the F&B bar** on the timeline to after the ingress clears — the conflict disappears.
+5. The **Approvals** panel shows the auto-derived approvers (Block C, Security, F&B — every
    team whose zones/gates the plan touches, except the author). Approvals unlock once blocking
    conflicts are resolved; approving all enables **Publish**.
-5. Any edit after approval resets approvals — plans are approved per revision.
-6. **+ Draw move**: click waypoints on the ground, set actor/team/times, create your own move
+6. Any edit after approval resets approvals — plans are approved per revision.
+7. **+ Draw move**: click waypoints on the ground, set actor/team/times, create your own move
    and watch reservations, conflicts, and the approver list update live.
-7. **Switch scenes** from the dropdown. Scenes carry data-driven **rules**: in the warehouse,
+8. **Switch scenes** from the dropdown. Scenes carry data-driven **rules**: in the warehouse,
    route a vehicle across the pedestrian-only walkway and a rule violation surfaces in the
    side panel and highlights in the 3D view.
-8. **Export / Import** the plan as JSON — the only persistence for now.
-9. Keyboard shortcuts: **Space** play/pause, **Esc** cancels drawing, **1/2/3** switch view
-   modes, **Delete** removes the selected move.
+9. **Export / Import** the plan as JSON — the only persistence for now.
+10. Keyboard shortcuts: **Space** play/pause, **Esc** cancels drawing, **1/2/3** switch view
+    modes, **Delete** removes the selected move.
 
 ## Architecture notes
 
 - `src/domain/` — pure TypeScript, no rendering: types, the reservation/conflict/approver
-  engine, data-driven rules, scene helpers and the scene registry (stadium + warehouse),
+  engine, data-driven rules, scene helpers and the scene registry (pharma + stadium + warehouse),
   plan JSON serialization. This is the product core (plan §8.1); unit tests are colocated
   (`*.test.ts`).
 - `src/state/` — Zustand store + derived-state selectors; any plan edit bumps the revision
