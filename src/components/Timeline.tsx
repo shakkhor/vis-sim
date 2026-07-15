@@ -1,8 +1,20 @@
-import { useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useVisSim } from '../state/store';
 import { teamById } from '../domain/scene';
 import { fmtTime } from '../domain/engine';
 import type { Conflict } from '../domain/types';
+
+const MIN_DURATION = 5;
+
+const edgeHandleStyle = (side: 'left' | 'right'): CSSProperties => ({
+  position: 'absolute',
+  top: 0,
+  bottom: 0,
+  width: 8,
+  ...(side === 'left' ? { left: 0 } : { right: 0 }),
+  cursor: 'ew-resize',
+  touchAction: 'none',
+});
 
 export default function Timeline({ conflicts }: { conflicts: Conflict[] }) {
   const scene = useVisSim((s) => s.scene);
@@ -58,6 +70,37 @@ export default function Timeline({ conflicts }: { conflicts: Conflict[] }) {
     window.addEventListener('pointerup', onUp);
   };
 
+  const onEdgePointerDown = (e: ReactPointerEvent, moveId: string, edge: 'start' | 'end') => {
+    e.preventDefault();
+    e.stopPropagation();
+    selectMove(moveId);
+    const move = moves.find((m) => m.id === moveId);
+    const el = lanesRef.current;
+    if (!move || !el) return;
+    const startX = e.clientX;
+    const { tStart, tEnd } = move;
+    const width = el.getBoundingClientRect().width;
+
+    const onMove = (ev: PointerEvent) => {
+      const dMin = ((ev.clientX - startX) / width) * span;
+      if (edge === 'start') {
+        const ns = Math.round(
+          Math.min(tEnd - MIN_DURATION, Math.max(scene.dayStart, tStart + dMin)),
+        );
+        retimeMove(moveId, ns, tEnd);
+      } else {
+        const ne = Math.round(Math.max(tStart + MIN_DURATION, Math.min(scene.dayEnd, tEnd + dMin)));
+        retimeMove(moveId, tStart, ne);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   const hours: number[] = [];
   for (let t = scene.dayStart; t <= scene.dayEnd; t += 60) hours.push(t);
 
@@ -101,6 +144,16 @@ export default function Timeline({ conflicts }: { conflicts: Conflict[] }) {
                 <span className="bar-time">
                   {fmtTime(m.tStart)}–{fmtTime(m.tEnd)}
                 </span>
+                <div
+                  style={edgeHandleStyle('left')}
+                  onPointerDown={(e) => onEdgePointerDown(e, m.id, 'start')}
+                  title={`${m.name} — drag to change start time`}
+                />
+                <div
+                  style={edgeHandleStyle('right')}
+                  onPointerDown={(e) => onEdgePointerDown(e, m.id, 'end')}
+                  title={`${m.name} — drag to change end time`}
+                />
               </div>
               {moveConflicts.map((c) => (
                 <div
