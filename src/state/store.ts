@@ -1,15 +1,16 @@
 import { create } from 'zustand';
 import type { ApprovalStatus, Move, SceneDef, Vec2 } from '../domain/types';
-import { INITIAL_MOVES, SAMPLE_SCENE } from '../domain/sampleScene';
+import { SCENES, sceneEntryById } from '../domain/scenes';
 
 export type Mode = 'select' | 'draw';
 
 export type ViewMode = '3d' | 'top' | 'iso';
 
 interface VisSimState {
-  /** The scene the plan runs against. Static in the prototype; data, not a global. */
+  /** The scene the plan runs against. Swappable via the scene registry. */
   scene: SceneDef;
   moves: Move[];
+  planName: string;
   playhead: number;
   playing: boolean;
   mode: Mode;
@@ -22,6 +23,8 @@ interface VisSimState {
   published: boolean;
   selectedMoveId: string | null;
 
+  setScene: (sceneId: string) => void;
+  loadMoves: (moves: Move[]) => void;
   setPlayhead: (t: number) => void;
   togglePlay: () => void;
   setMode: (m: Mode) => void;
@@ -39,10 +42,13 @@ interface VisSimState {
 /** Every plan edit invalidates approvals — approvals attach to a revision. */
 const invalidate = { approvals: {}, published: false } as const;
 
+const initialEntry = SCENES[0];
+
 export const useVisSim = create<VisSimState>((set, get) => ({
-  scene: SAMPLE_SCENE,
-  moves: INITIAL_MOVES,
-  playhead: SAMPLE_SCENE.dayStart + 60,
+  scene: initialEntry.scene,
+  moves: initialEntry.initialMoves,
+  planName: initialEntry.planName,
+  playhead: initialEntry.scene.dayStart + 60,
   playing: false,
   mode: 'select',
   viewMode: '3d',
@@ -51,6 +57,30 @@ export const useVisSim = create<VisSimState>((set, get) => ({
   approvals: {},
   published: false,
   selectedMoveId: null,
+
+  setScene: (sceneId) => {
+    const entry = sceneEntryById(sceneId);
+    if (!entry) return;
+    set({
+      scene: entry.scene,
+      moves: entry.initialMoves,
+      planName: entry.planName,
+      playhead: entry.scene.dayStart + 60,
+      playing: false,
+      mode: 'select',
+      draftPath: [],
+      revision: 1,
+      selectedMoveId: null,
+      ...invalidate,
+    });
+  },
+
+  loadMoves: (moves) =>
+    set((s) => ({
+      moves,
+      revision: s.revision + 1,
+      ...invalidate,
+    })),
 
   setPlayhead: (t) => set({ playhead: t }),
   togglePlay: () => set((s) => ({ playing: !s.playing })),
