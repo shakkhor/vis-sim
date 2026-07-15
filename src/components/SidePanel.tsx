@@ -3,11 +3,12 @@ import { useVisSim } from '../state/store';
 import { resourceById, teamById } from '../domain/scene';
 import { fmtTime } from '../domain/engine';
 import { generateBriefingHtml } from '../export/briefing';
-import type { ActorKind, Conflict } from '../domain/types';
+import type { ActorKind, Conflict, RuleViolation } from '../domain/types';
 
 interface Props {
   conflicts: Conflict[];
   approverTeamIds: string[];
+  violations: RuleViolation[];
 }
 
 function parseTime(s: string): number {
@@ -97,8 +98,9 @@ function DraftForm() {
   );
 }
 
-export default function SidePanel({ conflicts, approverTeamIds }: Props) {
+export default function SidePanel({ conflicts, approverTeamIds, violations }: Props) {
   const scene = useVisSim((s) => s.scene);
+  const planName = useVisSim((s) => s.planName);
   const moves = useVisSim((s) => s.moves);
   const approvals = useVisSim((s) => s.approvals);
   const approve = useVisSim((s) => s.approve);
@@ -112,6 +114,7 @@ export default function SidePanel({ conflicts, approverTeamIds }: Props) {
   const deleteMove = useVisSim((s) => s.deleteMove);
 
   const blocking = conflicts.filter((c) => c.blocking);
+  const approvalsGated = blocking.length > 0 || violations.length > 0;
   const allApproved =
     approverTeamIds.length > 0 && approverTeamIds.every((t) => approvals[t] === 'approved');
   const status = published
@@ -127,9 +130,9 @@ export default function SidePanel({ conflicts, approverTeamIds }: Props) {
     <div className="side-panel">
       <div className="card">
         <div className="row space-between">
-          <h2>Matchday — Aug 12</h2>
+          <h2>{planName}</h2>
           <span
-            className={`chip ${published ? 'chip-green' : blocking.length ? 'chip-red' : 'chip-amber'}`}
+            className={`chip ${published ? 'chip-green' : approvalsGated ? 'chip-red' : 'chip-amber'}`}
           >
             {status}
           </span>
@@ -172,6 +175,35 @@ export default function SidePanel({ conflicts, approverTeamIds }: Props) {
       </div>
 
       <div className="card">
+        <h3>
+          Rule violations <span className="count">{violations.length}</span>
+        </h3>
+        {violations.length === 0 && <p className="ok">No rule violations. ✓</p>}
+        {violations.map((v) => {
+          const rule = scene.rules?.find((r) => r.id === v.ruleId);
+          return (
+            <button
+              key={`${v.ruleId}-${v.moveId}-${v.resourceId}-${v.t0}`}
+              className="conflict-item blocking"
+              onClick={() => setPlayhead(v.t0)}
+            >
+              <b>{rule?.description ?? v.ruleId}</b> · {fmtTime(v.t0)}–{fmtTime(v.t1)}
+              <br />
+              <span className="muted">
+                {moveName(v.moveId)} · {resourceById(scene, v.resourceId)?.name ?? v.resourceId}
+              </span>
+              <span className="chip chip-red">blocking</span>
+            </button>
+          );
+        })}
+        {violations.length > 0 && (
+          <p className="muted">
+            Rule violations block approvals — reroute or retime the offending moves.
+          </p>
+        )}
+      </div>
+
+      <div className="card">
         <h3>Approvals</h3>
         <p className="muted small">Prototype note: you act as every reviewer here.</p>
         {approverTeamIds.map((id) => {
@@ -185,7 +217,7 @@ export default function SidePanel({ conflicts, approverTeamIds }: Props) {
               {approved ? (
                 <span className="chip chip-green">approved</span>
               ) : (
-                <button disabled={blocking.length > 0 || published} onClick={() => approve(id)}>
+                <button disabled={approvalsGated || published} onClick={() => approve(id)}>
                   Approve
                 </button>
               )}
@@ -203,7 +235,7 @@ export default function SidePanel({ conflicts, approverTeamIds }: Props) {
           <button
             disabled={!published}
             onClick={() => {
-              const html = generateBriefingHtml(scene, moves, 'Matchday — Aug 12');
+              const html = generateBriefingHtml(scene, moves, planName);
               const win = window.open('', '_blank');
               if (!win) return; // popup blocked
               win.document.write(html);
