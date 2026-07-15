@@ -20,7 +20,9 @@ export default function App() {
   const setMode = useVisSim((s) => s.setMode);
   const viewMode = useVisSim((s) => s.viewMode);
   const setViewMode = useVisSim((s) => s.setViewMode);
-  const { conflicts, approverTeamIds, violations } = usePlanAnalysis();
+  const pendingAdd = useVisSim((s) => s.pendingAdd);
+  const setPendingAdd = useVisSim((s) => s.setPendingAdd);
+  const { reservations, conflicts, approverTeamIds, violations } = usePlanAnalysis();
 
   return (
     <div className="app">
@@ -51,6 +53,25 @@ export default function App() {
         <button className={mode === 'draw' ? 'active' : ''} onClick={() => setMode('draw')}>
           + Draw move
         </button>
+        <button className={mode === 'scene' ? 'active' : ''} onClick={() => setMode('scene')}>
+          Edit scene
+        </button>
+        {mode === 'scene' && (
+          <>
+            <button
+              className={pendingAdd === 'zone' ? 'active' : ''}
+              onClick={() => setPendingAdd(pendingAdd === 'zone' ? null : 'zone')}
+            >
+              Add zone
+            </button>
+            <button
+              className={pendingAdd === 'connector' ? 'active' : ''}
+              onClick={() => setPendingAdd(pendingAdd === 'connector' ? null : 'connector')}
+            >
+              Add connector
+            </button>
+          </>
+        )}
         <button className="primary" onClick={togglePlay}>
           {playing ? '⏸ Pause' : '▶ Play'}
         </button>
@@ -61,6 +82,7 @@ export default function App() {
           <Viewport3D conflicts={conflicts} violations={violations} />
         </div>
         <SidePanel
+          reservations={reservations}
           conflicts={conflicts}
           approverTeamIds={approverTeamIds}
           violations={violations}

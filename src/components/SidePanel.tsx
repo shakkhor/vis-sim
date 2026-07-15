@@ -3,9 +3,10 @@ import { useVisSim } from '../state/store';
 import { resourceById, teamById } from '../domain/scene';
 import { fmtTime } from '../domain/engine';
 import { generateBriefingHtml } from '../export/briefing';
-import type { ActorKind, Conflict, RuleViolation } from '../domain/types';
+import type { ActorKind, Conflict, Reservation, RuleViolation } from '../domain/types';
 
 interface Props {
+  reservations: Reservation[];
   conflicts: Conflict[];
   approverTeamIds: string[];
   violations: RuleViolation[];
@@ -98,7 +99,98 @@ function DraftForm() {
   );
 }
 
-export default function SidePanel({ conflicts, approverTeamIds, violations }: Props) {
+function Inspector({ reservations }: { reservations: Reservation[] }) {
+  const scene = useVisSim((s) => s.scene);
+  const moves = useVisSim((s) => s.moves);
+  const revision = useVisSim((s) => s.revision);
+  const selectedResourceId = useVisSim((s) => s.selectedResourceId);
+  const updateResourceMeta = useVisSim((s) => s.updateResourceMeta);
+  const removeResource = useVisSim((s) => s.removeResource);
+
+  const resource = selectedResourceId ? resourceById(scene, selectedResourceId) : undefined;
+  if (!resource) return null;
+
+  const toggleOwner = (teamId: string) => {
+    const owners = resource.ownerTeamIds.includes(teamId)
+      ? resource.ownerTeamIds.filter((id) => id !== teamId)
+      : [...resource.ownerTeamIds, teamId];
+    if (owners.length === 0) return; // at least one owner required
+    updateResourceMeta(resource.id, { ownerTeamIds: owners });
+  };
+
+  const commitTags = (raw: string) =>
+    updateResourceMeta(resource.id, {
+      tags: raw
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+    });
+
+  const onDelete = () => {
+    const affected = [
+      ...new Set(reservations.filter((r) => r.resourceId === resource.id).map((r) => r.moveId)),
+    ].map((id) => moves.find((m) => m.id === id)?.name ?? id);
+    const message =
+      affected.length === 0
+        ? `Delete ${resource.name}?`
+        : `${affected.length} move${affected.length === 1 ? '' : 's'} reserve ${resource.name}:\n` +
+          `${affected.join(', ')}\n\n` +
+          'Deleting it will recompute conflicts and approvers. Continue?';
+    if (window.confirm(message)) removeResource(resource.id);
+  };
+
+  return (
+    <div className="card">
+      <h3>Inspector</h3>
+      <label>
+        Name{' '}
+        <input
+          value={resource.name}
+          onChange={(e) => updateResourceMeta(resource.id, { name: e.target.value })}
+        />
+      </label>
+      <p className="muted">
+        <span className="chip">{resource.kind}</span> ({resource.rect.x}, {resource.rect.z}) ·{' '}
+        {resource.rect.w}×{resource.rect.d}
+      </p>
+      <p className="muted small">Owner teams (at least one required):</p>
+      {scene.teams.map((t) => {
+        const checked = resource.ownerTeamIds.includes(t.id);
+        return (
+          <label className="row" key={t.id}>
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={checked && resource.ownerTeamIds.length === 1}
+              onChange={() => toggleOwner(t.id)}
+            />
+            <i className="swatch" style={{ background: t.color }} /> {t.name}
+          </label>
+        );
+      })}
+      <label>
+        Tags{' '}
+        <input
+          key={resource.id}
+          defaultValue={(resource.tags ?? []).join(', ')}
+          placeholder="comma, separated"
+          onBlur={(e) => commitTags(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+          }}
+        />
+      </label>
+      <div className="row">
+        <button className="danger" onClick={onDelete}>
+          Delete {resource.kind}
+        </button>
+      </div>
+      <p className="muted small">Scene edits reset approvals (rev {revision}).</p>
+    </div>
+  );
+}
+
+export default function SidePanel({ reservations, conflicts, approverTeamIds, violations }: Props) {
   const scene = useVisSim((s) => s.scene);
   const planName = useVisSim((s) => s.planName);
   const moves = useVisSim((s) => s.moves);
@@ -144,6 +236,7 @@ export default function SidePanel({ conflicts, approverTeamIds, violations }: Pr
       </div>
 
       {mode === 'draw' && <DraftForm />}
+      {mode === 'scene' && <Inspector reservations={reservations} />}
 
       <div className="card">
         <h3>
