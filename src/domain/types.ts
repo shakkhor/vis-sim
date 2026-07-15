@@ -80,10 +80,26 @@ export interface ForbiddenEntryRule {
 }
 
 /**
- * The rule vocabulary. Extend by adding new discriminated-union members here
- * (e.g. `SeparationRule`, `CapacityRule`) and handling them in `evaluateRules`.
+ * Moves executed by teams in `teamIdsA` may never share a resource carrying any
+ * of `resourceTags` with moves executed by teams in `teamIdsB` during overlapping
+ * time windows. Team-based because actor kind can be too coarse: waste egress and
+ * clean material ingress are both 'material' actors, but must never share
+ * space-time (pharma).
  */
-export type Rule = ForbiddenEntryRule;
+export interface SeparationRule {
+  id: string;
+  description: string;
+  kind: 'separation';
+  teamIdsA: string[];
+  teamIdsB: string[];
+  resourceTags: string[];
+}
+
+/**
+ * The rule vocabulary. Extend by adding new discriminated-union members here
+ * (e.g. `CapacityRule`) and handling them in `evaluateRules`.
+ */
+export type Rule = ForbiddenEntryRule | SeparationRule;
 
 /** A rule broken by a specific reservation. Conceptually always blocking. */
 export interface RuleViolation {
@@ -93,6 +109,8 @@ export interface RuleViolation {
   /** Reservation window during which the rule is violated (minutes-of-day). */
   t0: number;
   t1: number;
+  /** Present for pairwise rules (e.g. separation): the other move in the offending pair. */
+  otherMoveId?: string;
 }
 
 /**

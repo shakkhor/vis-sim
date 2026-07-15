@@ -133,6 +133,105 @@ describe('evaluateRules — forbidden-entry', () => {
   });
 });
 
+const separateWasteFromCleanSupply: Rule = {
+  id: 'pharma-separate-waste-clean-supply',
+  description: 'Waste egress may never share tagged corridors with clean material ingress',
+  kind: 'separation',
+  teamIdsA: ['waste-ops'],
+  teamIdsB: ['clean-supply'],
+  resourceTags: ['corridor'],
+};
+
+describe('evaluateRules — separation', () => {
+  const corridor = makeResource({ id: 'corridor-1', name: 'Corridor 1', tags: ['corridor'] });
+  const wasteMove = makeMove({ id: 'waste-egress', teamId: 'waste-ops' });
+  const cleanMove = makeMove({ id: 'clean-ingress', teamId: 'clean-supply' });
+
+  it('flags an A/B pair sharing a tagged resource with the overlap window', () => {
+    const reservations = [
+      makeReservation({ resourceId: 'corridor-1', moveId: 'waste-egress', t0: 730, t1: 760 }),
+      makeReservation({ resourceId: 'corridor-1', moveId: 'clean-ingress', t0: 745, t1: 780 }),
+    ];
+
+    const violations = evaluateRules(
+      [separateWasteFromCleanSupply],
+      reservations,
+      [wasteMove, cleanMove],
+      [corridor],
+    );
+
+    expect(violations).toEqual([
+      {
+        ruleId: 'pharma-separate-waste-clean-supply',
+        moveId: 'waste-egress',
+        otherMoveId: 'clean-ingress',
+        resourceId: 'corridor-1',
+        t0: 745,
+        t1: 760,
+      },
+    ]);
+  });
+
+  it('does not flag reservations without time overlap', () => {
+    const reservations = [
+      makeReservation({ resourceId: 'corridor-1', moveId: 'waste-egress', t0: 730, t1: 740 }),
+      makeReservation({ resourceId: 'corridor-1', moveId: 'clean-ingress', t0: 750, t1: 760 }),
+    ];
+    const violations = evaluateRules(
+      [separateWasteFromCleanSupply],
+      reservations,
+      [wasteMove, cleanMove],
+      [corridor],
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it('does not flag overlaps on resources without the rule tags', () => {
+    const loadingDock = makeResource({ id: 'dock', tags: ['loading-dock'] });
+    const reservations = [
+      makeReservation({ resourceId: 'dock', moveId: 'waste-egress', t0: 730, t1: 760 }),
+      makeReservation({ resourceId: 'dock', moveId: 'clean-ingress', t0: 745, t1: 780 }),
+    ];
+    const violations = evaluateRules(
+      [separateWasteFromCleanSupply],
+      reservations,
+      [wasteMove, cleanMove],
+      [loadingDock],
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it('ignores moves whose team is in neither group', () => {
+    const bystander = makeMove({ id: 'fnb-restock', teamId: 'f-and-b' });
+    const reservations = [
+      makeReservation({ resourceId: 'corridor-1', moveId: 'waste-egress', t0: 730, t1: 760 }),
+      makeReservation({ resourceId: 'corridor-1', moveId: 'fnb-restock', t0: 745, t1: 780 }),
+    ];
+    const violations = evaluateRules(
+      [separateWasteFromCleanSupply],
+      reservations,
+      [wasteMove, bystander],
+      [corridor],
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it('does not pair a move with itself when its team is in both groups', () => {
+    const bothGroupsRule: Rule = {
+      ...separateWasteFromCleanSupply,
+      id: 'separate-hybrid',
+      teamIdsA: ['hybrid'],
+      teamIdsB: ['hybrid'],
+    };
+    const hybridMove = makeMove({ id: 'hybrid-run', teamId: 'hybrid' });
+    const reservations = [
+      makeReservation({ resourceId: 'corridor-1', moveId: 'hybrid-run', t0: 730, t1: 760 }),
+    ];
+    const violations = evaluateRules([bothGroupsRule], reservations, [hybridMove], [corridor]);
+    expect(violations).toEqual([]);
+  });
+});
+
 describe('evaluateRules — rule sets', () => {
   it('returns nothing for an empty rule set', () => {
     const resources = [makeResource({ tags: ['clean', 'secure'] })];
