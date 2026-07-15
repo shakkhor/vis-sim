@@ -68,6 +68,34 @@ export interface Conflict {
 export type ApprovalStatus = 'pending' | 'approved';
 
 /**
+ * Actors of `actorKinds` may never hold a reservation on a resource carrying
+ * any of `resourceTags`. Example: waste flows forbidden in clean zones (pharma).
+ */
+export interface ForbiddenEntryRule {
+  id: string;
+  description: string;
+  kind: 'forbidden-entry';
+  actorKinds: ActorKind[];
+  resourceTags: string[];
+}
+
+/**
+ * The rule vocabulary. Extend by adding new discriminated-union members here
+ * (e.g. `SeparationRule`, `CapacityRule`) and handling them in `evaluateRules`.
+ */
+export type Rule = ForbiddenEntryRule;
+
+/** A rule broken by a specific reservation. Conceptually always blocking. */
+export interface RuleViolation {
+  ruleId: string;
+  moveId: string;
+  resourceId: string;
+  /** Reservation window during which the rule is violated (minutes-of-day). */
+  t0: number;
+  t1: number;
+}
+
+/**
  * A complete scene definition: the spatial + organizational context a plan
  * runs against. Data, not globals — the app must support many scenes (plan §4.1).
  */
@@ -79,4 +107,6 @@ export interface SceneDef {
   authorTeamId: string;
   dayStart: number;
   dayEnd: number;
+  /** Optional data-driven rules evaluated against derived reservations (plan §4.3). */
+  rules?: Rule[];
 }

@@ -56,6 +56,16 @@ export const WAREHOUSE_SCENE: SceneDef = {
       kind: 'zone',
       rect: { x: -44, z: -18, w: 88, d: 6 },
       ownerTeamIds: ['safety'],
+      tags: ['pedestrian-only'],
+    },
+  ],
+  rules: [
+    {
+      id: 'warehouse-no-vehicles-on-walkway',
+      description: "Vehicles may never enter zones tagged 'pedestrian-only'",
+      kind: 'forbidden-entry',
+      actorKinds: ['vehicle'],
+      resourceTags: ['pedestrian-only'],
     },
   ],
 };

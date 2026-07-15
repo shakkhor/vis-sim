@@ -3,35 +3,11 @@
 // kinds are added as new members of the `Rule` discriminated union plus one
 // evaluator branch below — no changes to callers required.
 
-import type { ActorKind, Move, Reservation, Resource } from './types';
+import type { ForbiddenEntryRule, Move, Reservation, Resource, Rule, RuleViolation } from './types';
 
-/**
- * Actors of `actorKinds` may never hold a reservation on a resource carrying
- * any of `resourceTags`. Example: waste flows forbidden in clean zones (pharma).
- */
-export interface ForbiddenEntryRule {
-  id: string;
-  description: string;
-  kind: 'forbidden-entry';
-  actorKinds: ActorKind[];
-  resourceTags: string[];
-}
-
-/**
- * The rule vocabulary. Extend by adding new discriminated-union members here
- * (e.g. `SeparationRule`, `CapacityRule`) and handling them in `evaluateRules`.
- */
-export type Rule = ForbiddenEntryRule;
-
-/** A rule broken by a specific reservation. Conceptually always blocking. */
-export interface RuleViolation {
-  ruleId: string;
-  moveId: string;
-  resourceId: string;
-  /** Reservation window during which the rule is violated (minutes-of-day). */
-  t0: number;
-  t1: number;
-}
+// Rule types live in types.ts (the single home for domain types); re-exported
+// here so rule consumers can keep importing them alongside `evaluateRules`.
+export type { ForbiddenEntryRule, Rule, RuleViolation } from './types';
 
 function tagsIntersect(resource: Resource, tags: string[]): boolean {
   return (resource.tags ?? []).some((t) => tags.includes(t));
