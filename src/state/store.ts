@@ -1,8 +1,18 @@
 import { create } from 'zustand';
-import type { ApprovalStatus, Move, SceneDef, Vec2 } from '../domain/types';
+import type { ApprovalStatus, Move, Rect, Resource, SceneDef, Vec2 } from '../domain/types';
 import { SCENES, sceneEntryById } from '../domain/scenes';
+import {
+  addResource as domainAddResource,
+  makeResourceId,
+  moveResource as domainMoveResource,
+  moveWaypoint as domainMoveWaypoint,
+  removeResource as domainRemoveResource,
+  resizeResource as domainResizeResource,
+  snapRect,
+  updateResourceMeta as domainUpdateResourceMeta,
+} from '../domain/sceneEdit';
 
-export type Mode = 'select' | 'draw';
+export type Mode = 'select' | 'draw' | 'scene';
 
 export type ViewMode = '3d' | 'top' | 'iso';
 
@@ -22,6 +32,10 @@ interface VisSimState {
   approvals: Record<string, ApprovalStatus>;
   published: boolean;
   selectedMoveId: string | null;
+  /** Scene-edit mode selection (PRD US-1); independent of selectedMoveId. */
+  selectedResourceId: string | null;
+  /** Armed draw-resource tool in scene-edit mode (PRD US-5). */
+  pendingAdd: 'zone' | 'connector' | null;
 
   setScene: (sceneId: string) => void;
   loadMoves: (moves: Move[]) => void;
@@ -37,6 +51,18 @@ interface VisSimState {
   deleteMove: (id: string) => void;
   approve: (teamId: string) => void;
   publish: () => void;
+
+  selectResource: (id: string | null) => void;
+  setPendingAdd: (kind: 'zone' | 'connector' | null) => void;
+  moveResourceBy: (id: string, dx: number, dz: number) => void;
+  resizeResourceTo: (id: string, rect: Rect) => void;
+  updateResourceMeta: (
+    id: string,
+    meta: { name?: string; ownerTeamIds?: string[]; tags?: string[] },
+  ) => void;
+  addResourceAt: (kind: 'zone' | 'connector', rect: Rect) => void;
+  removeResource: (id: string) => void;
+  moveMoveWaypoint: (moveId: string, index: number, p: Vec2) => void;
 }
 
 /** Every plan edit invalidates approvals — approvals attach to a revision. */
@@ -57,6 +83,8 @@ export const useVisSim = create<VisSimState>((set, get) => ({
   approvals: {},
   published: false,
   selectedMoveId: null,
+  selectedResourceId: null,
+  pendingAdd: null,
 
   setScene: (sceneId) => {
     const entry = sceneEntryById(sceneId);
@@ -71,6 +99,8 @@ export const useVisSim = create<VisSimState>((set, get) => ({
       draftPath: [],
       revision: 1,
       selectedMoveId: null,
+      selectedResourceId: null,
+      pendingAdd: null,
       ...invalidate,
     });
   },
@@ -84,7 +114,15 @@ export const useVisSim = create<VisSimState>((set, get) => ({
 
   setPlayhead: (t) => set({ playhead: t }),
   togglePlay: () => set((s) => ({ playing: !s.playing })),
-  setMode: (m) => set({ mode: m, draftPath: [] }),
+  setMode: (m) =>
+    set((s) => ({
+      mode: m,
+      draftPath: [],
+      // Entering or leaving scene-edit mode drops scene-edit UI state (PRD US-12).
+      ...(m === 'scene' || s.mode === 'scene'
+        ? { selectedResourceId: null, pendingAdd: null }
+        : {}),
+    })),
   setViewMode: (v) => set({ viewMode: v }),
   selectMove: (id) => set({ selectedMoveId: id }),
 
@@ -120,4 +158,101 @@ export const useVisSim = create<VisSimState>((set, get) => ({
 
   approve: (teamId) => set((s) => ({ approvals: { ...s.approvals, [teamId]: 'approved' } })),
   publish: () => set({ published: true }),
+
+  selectResource: (id) => set({ selectedResourceId: id }),
+  setPendingAdd: (kind) => set({ pendingAdd: kind }),
+
+  // Scene edits below delegate geometry/validation to src/domain/sceneEdit and
+  // always bump revision + clear approvals (PRD US-8: scene edits invalidate).
+  // Domain throws (e.g. a drag racing a deletion) are swallowed as no-ops.
+  moveResourceBy: (id, dx, dz) =>
+    set((s) => {
+      try {
+        return {
+          scene: domainMoveResource(s.scene, id, dx, dz),
+          revision: s.revision + 1,
+          ...invalidate,
+        };
+      } catch {
+        return {};
+      }
+    }),
+
+  resizeResourceTo: (id, rect) =>
+    set((s) => {
+      try {
+        return {
+          scene: domainResizeResource(s.scene, id, rect),
+          revision: s.revision + 1,
+          ...invalidate,
+        };
+      } catch {
+        return {};
+      }
+    }),
+
+  updateResourceMeta: (id, meta) =>
+    set((s) => {
+      try {
+        return {
+          scene: domainUpdateResourceMeta(s.scene, id, meta),
+          revision: s.revision + 1,
+          ...invalidate,
+        };
+      } catch {
+        return {};
+      }
+    }),
+
+  addResourceAt: (kind, rect) =>
+    set((s) => {
+      try {
+        const resource: Resource = {
+          id: makeResourceId(s.scene, kind),
+          name: kind === 'zone' ? 'New zone' : 'New connector',
+          kind,
+          rect: snapRect(rect),
+          ownerTeamIds: [s.scene.authorTeamId],
+        };
+        return {
+          scene: domainAddResource(s.scene, resource),
+          selectedResourceId: resource.id,
+          pendingAdd: null,
+          revision: s.revision + 1,
+          ...invalidate,
+        };
+      } catch {
+        return {};
+      }
+    }),
+
+  removeResource: (id) =>
+    set((s) => {
+      try {
+        return {
+          scene: domainRemoveResource(s.scene, id),
+          selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
+          revision: s.revision + 1,
+          ...invalidate,
+        };
+      } catch {
+        return {};
+      }
+    }),
+
+  moveMoveWaypoint: (moveId, index, p) =>
+    set((s) => {
+      const move = s.moves.find((m) => m.id === moveId);
+      if (!move) return {};
+      try {
+        const updated = domainMoveWaypoint(move, index, p);
+        return {
+          moves: s.moves.map((m) => (m.id === moveId ? updated : m)),
+          revision: s.revision + 1,
+          ...invalidate,
+        };
+      } catch {
+        return {};
+      }
+    }),
 }));
