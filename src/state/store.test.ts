@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Move, SceneDef } from '../domain/types';
-import { useVisSim } from './store';
+import { SCENES, sceneEntryById } from '../domain/scenes';
+import { listPersistedCustomScenes, nextLeftRail, useVisSim } from './store';
 
 const makeScene = (): SceneDef => ({
   id: 'test-scene',
@@ -55,6 +56,9 @@ const draftInput: Omit<Move, 'id' | 'path'> = {
 };
 
 beforeEach(() => {
+  // newScene() clears the module-level undo/redo stacks (and mirrors
+  // canUndo/canRedo to false) so history never leaks across tests.
+  useVisSim.getState().newScene();
   // Reset only the fields these tests exercise; the store may carry other
   // fields (added by parallel work) that we deliberately leave untouched.
   useVisSim.setState({
@@ -464,5 +468,454 @@ describe('setScene resets scene-edit state', () => {
     expect(s.selectedResourceId).toBeNull();
     expect(s.pendingAdd).toBeNull();
     expect(s.mode).toBe('select');
+  });
+
+  it('is a no-op for an unknown scene id (no registry entry, nothing persisted)', () => {
+    const before = useVisSim.getState();
+
+    useVisSim.getState().setScene('no-such-scene');
+
+    const s = useVisSim.getState();
+    expect(s.scene).toBe(before.scene);
+    expect(s.moves).toBe(before.moves);
+  });
+
+  it('clears undo history (canUndo/canRedo false, undo is a no-op)', () => {
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    expect(useVisSim.getState().canUndo).toBe(true);
+
+    useVisSim.getState().setScene('stadium-slice');
+
+    const s = useVisSim.getState();
+    expect(s.canUndo).toBe(false);
+    expect(s.canRedo).toBe(false);
+    const scene = s.scene;
+    useVisSim.getState().undo();
+    expect(useVisSim.getState().scene).toBe(scene);
+  });
+});
+
+describe('undo / redo', () => {
+  it('undo restores scene, moves, revision, and approvals across an edit sequence', () => {
+    // edit -> approve -> edit -> undo: the undo lands on the approved rev-2 state.
+    useVisSim.getState().retimeMove('move-a', 610, 670); // revision 2
+    useVisSim.getState().approve('team-b'); // no history entry
+    useVisSim.getState().moveResourceBy('zone-1', 2, 2); // revision 3, clears approvals
+
+    useVisSim.getState().undo();
+
+    const s = useVisSim.getState();
+    expect(s.revision).toBe(2);
+    expect(s.approvals).toEqual({ 'team-b': 'approved' });
+    // Scene is back to its pre-move geometry...
+    expect(s.scene.resources.find((r) => r.id === 'zone-1')?.rect).toEqual({
+      x: 0,
+      z: 0,
+      w: 4,
+      d: 4,
+    });
+    // ...while the retime (the earlier edit) is still applied.
+    const move = s.moves.find((m) => m.id === 'move-a');
+    expect(move?.tStart).toBe(610);
+    expect(move?.tEnd).toBe(670);
+    expect(s.canUndo).toBe(true);
+    expect(s.canRedo).toBe(true);
+  });
+
+  it('redo re-applies the undone edit', () => {
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    useVisSim.getState().approve('team-b');
+    useVisSim.getState().moveResourceBy('zone-1', 2, 2);
+    useVisSim.getState().undo();
+
+    useVisSim.getState().redo();
+
+    const s = useVisSim.getState();
+    expect(s.revision).toBe(3);
+    expect(s.approvals).toEqual({});
+    expect(s.scene.resources.find((r) => r.id === 'zone-1')?.rect).toEqual({
+      x: 2,
+      z: 2,
+      w: 4,
+      d: 4,
+    });
+    expect(s.canUndo).toBe(true);
+    expect(s.canRedo).toBe(false);
+  });
+
+  it('a new edit after undo clears the redo stack', () => {
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    useVisSim.getState().undo();
+    expect(useVisSim.getState().canRedo).toBe(true);
+
+    useVisSim.getState().retimeMove('move-a', 615, 675);
+
+    const s = useVisSim.getState();
+    expect(s.canRedo).toBe(false);
+    const before = useVisSim.getState();
+    useVisSim.getState().redo(); // no-op: nothing to redo
+    expect(useVisSim.getState().moves).toBe(before.moves);
+    expect(useVisSim.getState().revision).toBe(before.revision);
+  });
+
+  it('caps history at 50: 60 edits allow exactly 50 undos', () => {
+    for (let i = 0; i < 60; i++) {
+      useVisSim.getState().retimeMove('move-a', 600 + i, 700 + i);
+    }
+    expect(useVisSim.getState().revision).toBe(61);
+
+    let undos = 0;
+    while (useVisSim.getState().canUndo) {
+      useVisSim.getState().undo();
+      undos++;
+      expect(undos).toBeLessThanOrEqual(50);
+    }
+
+    expect(undos).toBe(50);
+    // Landed on the oldest retained snapshot (the state after the 10th edit,
+    // i.e. pre-edit 11) — not the initial state, which fell off the cap.
+    const s = useVisSim.getState();
+    expect(s.revision).toBe(11);
+    expect(s.moves.find((m) => m.id === 'move-a')?.tStart).toBe(609);
+    // A further undo is a no-op.
+    useVisSim.getState().undo();
+    expect(useVisSim.getState().revision).toBe(11);
+  });
+
+  it('canUndo/canRedo mirror the stack states through a full cycle', () => {
+    let s = useVisSim.getState();
+    expect(s.canUndo).toBe(false);
+    expect(s.canRedo).toBe(false);
+
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    s = useVisSim.getState();
+    expect(s.canUndo).toBe(true);
+    expect(s.canRedo).toBe(false);
+
+    useVisSim.getState().undo();
+    s = useVisSim.getState();
+    expect(s.canUndo).toBe(false);
+    expect(s.canRedo).toBe(true);
+
+    useVisSim.getState().redo();
+    s = useVisSim.getState();
+    expect(s.canUndo).toBe(true);
+    expect(s.canRedo).toBe(false);
+  });
+
+  it('undo does not restore playhead, mode, or selection (UI state is not history)', () => {
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    useVisSim.setState({ playhead: 900, mode: 'draw', selectedMoveId: 'move-a' });
+
+    useVisSim.getState().undo();
+
+    const s = useVisSim.getState();
+    expect(s.playhead).toBe(900);
+    expect(s.mode).toBe('draw');
+    expect(s.selectedMoveId).toBe('move-a');
+  });
+
+  it('no-op mutations (invalid ids) record no history', () => {
+    useVisSim.getState().moveResourceBy('nope', 1, 1);
+    useVisSim.getState().moveMoveWaypoint('nope', 0, { x: 1, z: 1 });
+
+    expect(useVisSim.getState().canUndo).toBe(false);
+  });
+});
+
+describe('duplicateSelectedResource', () => {
+  it('appends a copy, selects it, bumps revision, and invalidates approvals', () => {
+    useVisSim.setState({
+      selectedResourceId: 'zone-1',
+      approvals: { 'team-b': 'approved' },
+      published: true,
+    });
+
+    useVisSim.getState().duplicateSelectedResource();
+
+    const s = useVisSim.getState();
+    expect(s.scene.resources).toHaveLength(3);
+    const copy = s.scene.resources[s.scene.resources.length - 1];
+    expect(copy.id).not.toBe('zone-1');
+    expect(copy.name).toBe('Zone 1 copy');
+    expect(copy.kind).toBe('zone');
+    expect(s.selectedResourceId).toBe(copy.id);
+    expect(s.revision).toBe(2);
+    expect(s.approvals).toEqual({});
+    expect(s.published).toBe(false);
+    expect(s.canUndo).toBe(true);
+  });
+
+  it('is a no-op when nothing is selected', () => {
+    const before = useVisSim.getState();
+    expect(before.selectedResourceId).toBeNull();
+
+    useVisSim.getState().duplicateSelectedResource();
+
+    const s = useVisSim.getState();
+    expect(s.scene).toBe(before.scene);
+    expect(s.revision).toBe(1);
+    expect(s.canUndo).toBe(false);
+  });
+
+  it('is a no-op when the selection points at a deleted resource', () => {
+    useVisSim.setState({ selectedResourceId: 'nope' });
+    const before = useVisSim.getState();
+
+    expect(() => useVisSim.getState().duplicateSelectedResource()).not.toThrow();
+
+    const s = useVisSim.getState();
+    expect(s.scene).toBe(before.scene);
+    expect(s.revision).toBe(1);
+    expect(s.canUndo).toBe(false);
+  });
+
+  it('undo removes the copy again', () => {
+    useVisSim.setState({ selectedResourceId: 'zone-1' });
+    useVisSim.getState().duplicateSelectedResource();
+    expect(useVisSim.getState().scene.resources).toHaveLength(3);
+
+    useVisSim.getState().undo();
+
+    expect(useVisSim.getState().scene.resources).toHaveLength(2);
+  });
+});
+
+describe('newScene', () => {
+  it('resets the plan lifecycle and enters scene-edit mode on a blank scene', () => {
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    useVisSim.getState().approve('team-b');
+    useVisSim.getState().publish();
+
+    useVisSim.getState().newScene();
+
+    const s = useVisSim.getState();
+    expect(s.revision).toBe(1);
+    expect(s.approvals).toEqual({});
+    expect(s.published).toBe(false);
+    expect(s.mode).toBe('scene');
+    expect(s.moves).toEqual([]);
+    expect(s.scene.resources).toEqual([]);
+    expect(s.scene.teams.length).toBeGreaterThan(0);
+    expect(s.planName).toBe('New plan');
+    expect(s.selectedMoveId).toBeNull();
+    expect(s.selectedResourceId).toBeNull();
+    expect(s.pendingAdd).toBeNull();
+  });
+
+  it('clears undo/redo history', () => {
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    useVisSim.getState().undo();
+    expect(useVisSim.getState().canRedo).toBe(true);
+
+    useVisSim.getState().newScene();
+
+    const s = useVisSim.getState();
+    expect(s.canUndo).toBe(false);
+    expect(s.canRedo).toBe(false);
+    const scene = s.scene;
+    useVisSim.getState().undo();
+    useVisSim.getState().redo();
+    expect(useVisSim.getState().scene).toBe(scene);
+  });
+});
+
+describe('resetSceneToDefault', () => {
+  it('restores registry defaults for a registry scene after edits', () => {
+    useVisSim.getState().setScene('stadium-slice');
+    const entry = sceneEntryById('stadium-slice')!;
+    useVisSim.getState().addResourceAt('zone', { x: 0, z: 0, w: 2, d: 2 });
+    expect(useVisSim.getState().scene.resources).toHaveLength(entry.scene.resources.length + 1);
+
+    useVisSim.getState().resetSceneToDefault();
+
+    const s = useVisSim.getState();
+    expect(s.scene).toBe(entry.scene);
+    expect(s.moves).toBe(entry.initialMoves);
+    expect(s.planName).toBe(entry.planName);
+    expect(s.revision).toBe(1);
+    expect(s.approvals).toEqual({});
+    expect(s.published).toBe(false);
+    expect(s.mode).toBe('select');
+    expect(s.playhead).toBe(entry.scene.dayStart + 60);
+    expect(s.canUndo).toBe(false);
+    expect(s.canRedo).toBe(false);
+  });
+
+  it('resets a custom scene to the blank template under the same id and name', () => {
+    // beforeEach put us on the non-registry 'test-scene'.
+    useVisSim.getState().addResourceAt('zone', { x: 20, z: 20, w: 2, d: 2 });
+
+    useVisSim.getState().resetSceneToDefault();
+
+    const s = useVisSim.getState();
+    expect(s.scene.id).toBe('test-scene');
+    expect(s.scene.name).toBe('Test scene');
+    expect(s.scene.resources).toEqual([]);
+    expect(s.moves).toEqual([]);
+    expect(s.revision).toBe(1);
+    expect(s.mode).toBe('scene');
+    expect(s.canUndo).toBe(false);
+  });
+});
+
+describe('persistence is safe without localStorage (node env)', () => {
+  it('listPersistedCustomScenes returns an empty list', () => {
+    expect(listPersistedCustomScenes()).toEqual([]);
+  });
+
+  it('every persisting action runs without throwing', () => {
+    const run = () => {
+      useVisSim.getState().retimeMove('move-a', 610, 670);
+      useVisSim.getState().moveResourceBy('zone-1', 1, 1);
+      useVisSim.getState().duplicateSelectedResource();
+      useVisSim.getState().undo();
+      useVisSim.getState().redo();
+      useVisSim.getState().newScene();
+      useVisSim.getState().resetSceneToDefault();
+      useVisSim.getState().setScene('stadium-slice');
+      useVisSim.getState().loadMoves([makeMove()]);
+    };
+
+    expect(run).not.toThrow();
+  });
+});
+
+describe('toggleMode', () => {
+  it('activates a different mode like setMode', () => {
+    useVisSim.getState().toggleMode('draw');
+
+    expect(useVisSim.getState().mode).toBe('draw');
+  });
+
+  it('returns to select when the active mode is toggled again', () => {
+    useVisSim.getState().toggleMode('scene');
+    expect(useVisSim.getState().mode).toBe('scene');
+
+    useVisSim.getState().toggleMode('scene');
+
+    expect(useVisSim.getState().mode).toBe('select');
+  });
+
+  it("toggling 'select' while in select stays in select", () => {
+    useVisSim.getState().toggleMode('select');
+
+    expect(useVisSim.getState().mode).toBe('select');
+  });
+
+  it('keeps setMode cleanup semantics: leaving scene clears scene-edit state', () => {
+    useVisSim.setState({ mode: 'scene', selectedResourceId: 'zone-1', pendingAdd: 'zone' });
+
+    useVisSim.getState().toggleMode('scene'); // active → back to select
+
+    const s = useVisSim.getState();
+    expect(s.mode).toBe('select');
+    expect(s.selectedResourceId).toBeNull();
+    expect(s.pendingAdd).toBeNull();
+  });
+
+  it('keeps setMode cleanup semantics: entering draw clears the draft path', () => {
+    useVisSim.setState({
+      draftPath: [
+        { x: 1, z: 1 },
+        { x: 2, z: 2 },
+      ],
+    });
+
+    useVisSim.getState().toggleMode('draw');
+
+    const s = useVisSim.getState();
+    expect(s.mode).toBe('draw');
+    expect(s.draftPath).toEqual([]);
+  });
+
+  it('records no undo history and never touches the plan', () => {
+    useVisSim.getState().toggleMode('draw');
+    useVisSim.getState().toggleMode('draw');
+
+    const s = useVisSim.getState();
+    expect(s.canUndo).toBe(false);
+    expect(s.revision).toBe(1);
+  });
+});
+
+describe('ui slice (panel chrome)', () => {
+  it('setUi merges partials without touching plan state or history', () => {
+    useVisSim.getState().setUi({ leftRail: 'expanded', rightOpen: true, bottomOpen: true });
+
+    useVisSim.getState().setUi({ rightOpen: false });
+
+    const s = useVisSim.getState();
+    expect(s.ui).toEqual({ leftRail: 'expanded', rightOpen: false, bottomOpen: true });
+    expect(s.revision).toBe(1);
+    expect(s.canUndo).toBe(false);
+    expect(s.approvals).toEqual({});
+  });
+
+  it('persisting ui does not throw without localStorage (node env)', () => {
+    const run = () => {
+      useVisSim.getState().setUi({ leftRail: 'slim' });
+      useVisSim.getState().setUi({ leftRail: 'hidden', bottomOpen: false });
+      useVisSim.getState().setUi({ leftRail: 'expanded', rightOpen: true, bottomOpen: true });
+    };
+
+    expect(run).not.toThrow();
+  });
+
+  it('ui survives plan edits, undo/redo, and scene switches', () => {
+    useVisSim.getState().setUi({ leftRail: 'slim', rightOpen: false, bottomOpen: false });
+
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    useVisSim.getState().undo();
+    useVisSim.getState().redo();
+    useVisSim.getState().setScene('stadium-slice');
+
+    expect(useVisSim.getState().ui).toEqual({
+      leftRail: 'slim',
+      rightOpen: false,
+      bottomOpen: false,
+    });
+
+    useVisSim.getState().setUi({ leftRail: 'expanded', rightOpen: true, bottomOpen: true });
+  });
+
+  it('nextLeftRail cycles expanded → slim → hidden → expanded', () => {
+    expect(nextLeftRail('expanded')).toBe('slim');
+    expect(nextLeftRail('slim')).toBe('hidden');
+    expect(nextLeftRail('hidden')).toBe('expanded');
+  });
+});
+
+describe('boot restore from localStorage', () => {
+  it('module load prefers a persisted plan for the default scene over registry data', async () => {
+    const entry = SCENES[0];
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, value),
+      removeItem: (key: string) => void storage.delete(key),
+    });
+    storage.set(
+      `vissim:scene:${entry.scene.id}`,
+      JSON.stringify({
+        scene: { ...entry.scene, name: 'Edited before reload' },
+        moves: [],
+        planName: 'Persisted plan',
+      }),
+    );
+    try {
+      // Fresh module instance so its load-time boot-restore path runs against
+      // the stubbed storage; the statically imported store is untouched.
+      vi.resetModules();
+      const fresh = await import('./store');
+      const s = fresh.useVisSim.getState();
+      expect(s.planName).toBe('Persisted plan');
+      expect(s.scene.name).toBe('Edited before reload');
+      expect(s.moves).toEqual([]);
+      expect(s.playhead).toBe(entry.scene.dayStart + 60);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
   });
 });
