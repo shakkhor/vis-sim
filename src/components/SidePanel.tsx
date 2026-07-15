@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useVisSim } from '../state/store';
 import { resourceById, teamById } from '../domain/scene';
 import { fmtTime } from '../domain/engine';
+import { generateBriefingHtml } from '../export/briefing';
 import type { ActorKind, Conflict } from '../domain/types';
 
 interface Props {
@@ -191,9 +192,27 @@ export default function SidePanel({ conflicts, approverTeamIds }: Props) {
             </div>
           );
         })}
-        <button className="primary publish" disabled={!allApproved || published} onClick={publish}>
-          {published ? 'Published ✓' : 'Publish plan'}
-        </button>
+        <div className="row">
+          <button
+            className="primary publish"
+            disabled={!allApproved || published}
+            onClick={publish}
+          >
+            {published ? 'Published ✓' : 'Publish plan'}
+          </button>
+          <button
+            disabled={!published}
+            onClick={() => {
+              const html = generateBriefingHtml(scene, moves, 'Matchday — Aug 12');
+              const win = window.open('', '_blank');
+              if (!win) return; // popup blocked
+              win.document.write(html);
+              win.document.close();
+            }}
+          >
+            Briefing pack
+          </button>
+        </div>
         {published && (
           <p className="muted small">
             Next (per plan §5.6): export this as a training video / briefing pack.
