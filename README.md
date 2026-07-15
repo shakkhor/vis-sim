@@ -40,9 +40,14 @@ scene with a pedestrian-only walkway.
 8. **Switch scenes** from the dropdown. Scenes carry data-driven **rules**: in the warehouse,
    route a vehicle across the pedestrian-only walkway and a rule violation surfaces in the
    side panel and highlights in the 3D view.
-9. **Export / Import** the plan as JSON — the only persistence for now.
-10. Keyboard shortcuts: **Space** play/pause, **Esc** cancels drawing, **1/2/3** switch view
-    modes, **Delete** removes the selected move.
+9. **Edit scene**: select, drag, resize, add, duplicate, and delete zones/connectors on a
+   snap grid with alignment guides; **New scene** starts a blank facility. Edits auto-save
+   to browser localStorage per scene (with **Reset scene** to return to defaults) —
+   **Export / Import** JSON remains the way to share a plan.
+10. Keyboard shortcuts: **Space** play/pause, **Esc** cancels drawing/editing, **1/2/3**
+    switch view modes, **Delete** removes the selected move, **Ctrl/Cmd+Z** undo,
+    **Ctrl/Cmd+Shift+Z** or **Ctrl/Cmd+Y** redo, **Ctrl/Cmd+D** duplicates the selected
+    resource in scene-edit mode.
 
 ## Architecture notes
 

@@ -16,8 +16,8 @@ Spatial operations planning platform. Phase 0 prototype of the flagship loop in
 - `src/domain/` — pure TypeScript. Types, the reservation/conflict/approver engine
   (`engine.ts`), data-driven rules (`rules.ts`), scene lookup helpers (`scene.ts`),
   pure scene-mutation helpers for interactive editing (`sceneEdit.ts`),
-  scene content and registry (`sampleScene.ts`, `warehouseScene.ts`, `scenes.ts`),
-  plan JSON serialization (`serialization.ts`).
+  scene content and registry (`sampleScene.ts`, `warehouseScene.ts`, `pharmaScene.ts`,
+  `scenes.ts`), plan JSON serialization (`serialization.ts`).
   **No React, no three.js imports allowed here.** Unit tests colocated (`*.test.ts`).
 - `src/state/` — Zustand store (`store.ts`) and derived-state hooks (`selectors.ts`).
   Scene data flows through the store; never import scene constants from components.
@@ -44,5 +44,6 @@ Spatial operations planning platform. Phase 0 prototype of the flagship loop in
 ## Known limitations (intentional, documented in README)
 
 - Single-user approvals (you act as all reviewers).
-- No persistence beyond manual plan JSON export/import.
+- Persistence is local-only: scenes/plans auto-save to browser localStorage
+  (per scene id); sharing still goes through manual plan JSON export/import.
 - Move timing is choreographed by hand, not computed from actor speeds/distances.
