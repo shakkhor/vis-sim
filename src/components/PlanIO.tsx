@@ -80,24 +80,26 @@ export default function PlanIO() {
   };
 
   return (
-    <div>
-      <div className="row">
-        <button onClick={handleExport}>Export</button>
-        <button onClick={() => fileInputRef.current?.click()}>Import</button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json,application/json"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = '';
-            if (file) void handleFile(file);
-          }}
-        />
-      </div>
+    <div className="planio">
+      <button title="Export plan as JSON" onClick={handleExport}>
+        Export
+      </button>
+      <button title="Import a plan JSON file" onClick={() => fileInputRef.current?.click()}>
+        Import
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) void handleFile(file);
+        }}
+      />
       {error && (
-        <div role="alert" style={{ color: '#e05555', fontSize: '12px', marginTop: '4px' }}>
+        <div role="alert" className="planio-error">
           {error}
         </div>
       )}

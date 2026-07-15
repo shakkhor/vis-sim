@@ -18,122 +18,72 @@ body {
   font-size: 14px;
 }
 
+:focus-visible {
+  outline: 2px solid #3b62c4;
+  outline-offset: 1px;
+}
+
 .app {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
+/* ---------------------------------------------------------------- topbar */
+
 .topbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
+  gap: 8px;
+  height: 42px;
+  padding: 0 10px;
   background: #1a1f2e;
   border-bottom: 1px solid #2a3145;
+  flex-shrink: 0;
 }
 .logo {
   font-weight: 700;
-  font-size: 16px;
+  font-size: 15px;
   letter-spacing: 0.5px;
+  margin-right: 2px;
 }
-.clock {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  min-width: 48px;
-  text-align: right;
+.topbar select {
+  background: #10131c;
+  color: #e6e9f2;
+  border: 1px solid #2a3145;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+  max-width: 180px;
+}
+.plan-name {
+  font-size: 12px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tb-divider {
+  width: 1px;
+  height: 18px;
+  background: #2a3145;
+  flex-shrink: 0;
 }
 .grow {
   flex: 1;
 }
 
-.main {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-.viewport {
-  flex: 1;
-  min-width: 0;
-}
-
-.side-panel {
-  width: 340px;
-  overflow-y: auto;
-  padding: 10px;
-  background: #151927;
-  border-left: 1px solid #2a3145;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.card {
-  background: #1c2233;
-  border: 1px solid #2a3145;
-  border-radius: 8px;
-  padding: 12px;
-}
-.card h2 {
-  margin: 0;
-  font-size: 15px;
-}
-.card h3 {
-  margin: 0 0 8px;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: #9aa4c0;
-}
-.card label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0;
-}
-.card input,
-.card select {
-  background: #10131c;
-  color: #e6e9f2;
-  border: 1px solid #2a3145;
-  border-radius: 5px;
-  padding: 5px 8px;
-  width: 150px;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.space-between {
-  justify-content: space-between;
-}
-.muted {
-  color: #8b94ad;
-}
-.small {
-  font-size: 12px;
-}
-.ok {
-  color: #5fd39a;
-}
-.count {
-  background: #2a3145;
-  border-radius: 10px;
-  padding: 1px 8px;
-  font-size: 12px;
-}
+/* --------------------------------------------------------------- buttons */
 
 button {
   background: #262e45;
   color: #e6e9f2;
   border: 1px solid #39425e;
   border-radius: 6px;
-  padding: 6px 12px;
+  padding: 5px 11px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  font-family: inherit;
 }
 button:hover:not(:disabled) {
   background: #313b58;
@@ -163,6 +113,272 @@ button.publish {
   margin-top: 10px;
 }
 
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Segmented control: joined buttons, single accent for the active segment. */
+.seg {
+  display: inline-flex;
+}
+.seg button {
+  border-radius: 0;
+  margin-left: -1px;
+  padding: 5px 10px;
+}
+.seg button:first-child {
+  border-radius: 6px 0 0 6px;
+  margin-left: 0;
+}
+.seg button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.seg button.active {
+  position: relative;
+  z-index: 1;
+}
+
+/* Plan IO cluster with floating error toast (topbar stays one line tall). */
+.planio {
+  position: relative;
+  display: flex;
+  gap: 6px;
+}
+.planio-error {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 30;
+  width: 300px;
+  background: #2d1a1c;
+  border: 1px solid #6b2f33;
+  color: #ff9b9b;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* ------------------------------------------------------------- workbench */
+
+.workbench {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.viewport {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Left tool rail: expanded (icons+labels) → slim (icons) → hidden. */
+.tool-rail {
+  width: 150px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: #151927;
+  border-right: 1px solid #2a3145;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 6px;
+  transition:
+    width 150ms ease,
+    padding 150ms ease;
+}
+.tool-rail.rail-slim {
+  width: 44px;
+  padding: 8px 5px;
+}
+.tool-rail.rail-hidden {
+  width: 0;
+  padding: 8px 0;
+  border-right: none;
+}
+.rail-section {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: #6f7994;
+  padding: 3px 8px 4px;
+  white-space: nowrap;
+}
+.rail-slim .rail-section {
+  visibility: hidden;
+  height: 6px;
+  padding: 0;
+}
+.rail-divider {
+  height: 1px;
+  background: #2a3145;
+  margin: 6px 2px;
+  flex-shrink: 0;
+}
+.tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border-color: transparent;
+  text-align: left;
+  white-space: nowrap;
+  color: #c6cde0;
+}
+.tool-btn:hover:not(:disabled) {
+  background: #232b42;
+}
+.tool-btn.active {
+  color: #fff;
+}
+.tool-btn svg {
+  flex-shrink: 0;
+}
+.tool-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tool-key {
+  font-size: 10px;
+  color: #6f7994;
+  border: 1px solid #2a3145;
+  border-radius: 4px;
+  padding: 0 4px;
+  line-height: 14px;
+}
+.tool-btn.active .tool-key {
+  color: #cdd9f5;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.rail-slim .tool-btn {
+  justify-content: center;
+  padding: 7px 0;
+}
+.rail-slim .tool-label,
+.rail-slim .tool-key {
+  display: none;
+}
+
+/* Edge tabs: always-visible slim grips for collapsing side panels. */
+.edge-tab {
+  width: 14px;
+  flex-shrink: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: #121622;
+  border: none;
+  border-right: 1px solid #2a3145;
+  border-radius: 0;
+  color: #5c667f;
+  cursor: pointer;
+}
+.edge-tab:hover:not(:disabled) {
+  background: #1c2438;
+  color: #aeb9d6;
+}
+.edge-tab-right {
+  border-right: none;
+  border-left: 1px solid #2a3145;
+}
+
+/* Right dock: SidePanel inside an animated-width container. */
+.right-dock {
+  width: 340px;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 150ms ease;
+}
+.right-dock.closed {
+  width: 0;
+}
+.right-dock .side-panel {
+  width: 340px;
+  height: 100%;
+}
+
+.side-panel {
+  width: 340px;
+  overflow-y: auto;
+  padding: 10px;
+  background: #151927;
+  border-left: 1px solid #2a3145;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ----------------------------------------------------------------- cards */
+
+.card {
+  background: #1c2233;
+  border: 1px solid #2a3145;
+  border-radius: 6px;
+  padding: 12px;
+}
+.card h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.card h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: #9aa4c0;
+}
+.card label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.card input,
+.card select {
+  background: #10131c;
+  color: #e6e9f2;
+  border: 1px solid #2a3145;
+  border-radius: 6px;
+  padding: 5px 8px;
+  width: 150px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.space-between {
+  justify-content: space-between;
+}
+.muted {
+  color: #8b94ad;
+}
+.small {
+  font-size: 12px;
+}
+.ok {
+  color: #5fd39a;
+}
+.count {
+  background: #2a3145;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
 .chip {
   border-radius: 10px;
   padding: 2px 10px;
@@ -181,6 +397,10 @@ button.publish {
 .chip-red {
   background: #4a1a1a;
   color: #ff7b7b;
+}
+.chip-neutral {
+  background: #262e45;
+  color: #9aa4c0;
 }
 
 .swatch {
@@ -244,12 +464,47 @@ button.publish {
   white-space: nowrap;
 }
 
-/* Timeline */
+/* ----------------------------------------------------------- bottom dock */
+
+.bottom-dock {
+  flex-shrink: 0;
+  border-top: 1px solid #2a3145;
+  background: #151927;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 10px;
+  border-bottom: 1px solid #1d2335;
+}
+.transport-clock {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+}
+.transport-range {
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-collapse {
+  height: 190px;
+  overflow: hidden;
+  transition: height 150ms ease;
+}
+.tl-collapse.closed {
+  height: 0;
+}
+
+/* Timeline lane grid */
 .timeline {
   display: flex;
   height: 190px;
   background: #151927;
-  border-top: 1px solid #2a3145;
   user-select: none;
 }
 .tl-labels {
@@ -343,6 +598,36 @@ button.publish {
   background: #ff4d6d;
   pointer-events: none;
 }
+
+/* ------------------------------------------------------------ status bar */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  flex-shrink: 0;
+  background: #131726;
+  border-top: 1px solid #2a3145;
+  font-size: 11px;
+  color: #8b94ad;
+}
+.status-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-mini {
+  border-radius: 8px;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------- 3D bits */
 
 .zone-label {
   font-size: 11px;

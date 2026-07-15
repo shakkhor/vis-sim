@@ -2,9 +2,58 @@ import { useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } fr
 import { useVisSim } from '../state/store';
 import { teamById } from '../domain/scene';
 import { fmtTime } from '../domain/engine';
+import { Icon } from './icons';
 import type { Conflict } from '../domain/types';
 
 const MIN_DURATION = 5;
+
+/**
+ * Transport row: playback controls that stay visible even when the timeline
+ * grid is collapsed away (you always need play).
+ */
+function Transport() {
+  const scene = useVisSim((s) => s.scene);
+  const playhead = useVisSim((s) => s.playhead);
+  const playing = useVisSim((s) => s.playing);
+  const togglePlay = useVisSim((s) => s.togglePlay);
+  const setPlayhead = useVisSim((s) => s.setPlayhead);
+  const bottomOpen = useVisSim((s) => s.ui.bottomOpen);
+  const setUi = useVisSim((s) => s.setUi);
+
+  return (
+    <div className="transport">
+      <button
+        className="icon-btn primary"
+        title={playing ? 'Pause (Space)' : 'Play (Space)'}
+        aria-label={playing ? 'Pause' : 'Play'}
+        onClick={togglePlay}
+      >
+        <Icon name={playing ? 'pause' : 'play'} size={14} />
+      </button>
+      <button
+        className="icon-btn"
+        title="Jump to start of day"
+        aria-label="Jump to start of day"
+        onClick={() => setPlayhead(scene.dayStart)}
+      >
+        <Icon name="skipStart" size={14} />
+      </button>
+      <span className="transport-clock">{fmtTime(playhead)}</span>
+      <span className="muted small transport-range">
+        day {fmtTime(scene.dayStart)}–{fmtTime(scene.dayEnd)}
+      </span>
+      <div className="grow" />
+      <button
+        className="icon-btn"
+        title={`${bottomOpen ? 'Collapse' : 'Expand'} timeline (\\)`}
+        aria-label={bottomOpen ? 'Collapse timeline' : 'Expand timeline'}
+        onClick={() => setUi({ bottomOpen: !bottomOpen })}
+      >
+        <Icon name={bottomOpen ? 'chevronDown' : 'chevronUp'} size={13} />
+      </button>
+    </div>
+  );
+}
 
 const edgeHandleStyle = (side: 'left' | 'right'): CSSProperties => ({
   position: 'absolute',
@@ -16,7 +65,22 @@ const edgeHandleStyle = (side: 'left' | 'right'): CSSProperties => ({
   touchAction: 'none',
 });
 
-export default function Timeline({ conflicts }: { conflicts: Conflict[] }) {
+/**
+ * Bottom dock: transport row (always visible) over the collapsible lane grid.
+ */
+export default function TimelineDock({ conflicts }: { conflicts: Conflict[] }) {
+  const bottomOpen = useVisSim((s) => s.ui.bottomOpen);
+  return (
+    <div className="bottom-dock">
+      <Transport />
+      <div className={`tl-collapse ${bottomOpen ? '' : 'closed'}`}>
+        <TimelineGrid conflicts={conflicts} />
+      </div>
+    </div>
+  );
+}
+
+function TimelineGrid({ conflicts }: { conflicts: Conflict[] }) {
   const scene = useVisSim((s) => s.scene);
   const moves = useVisSim((s) => s.moves);
   const playhead = useVisSim((s) => s.playhead);
