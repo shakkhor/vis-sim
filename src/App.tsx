@@ -11,6 +11,8 @@ export default function App() {
   const togglePlay = useVisSim((s) => s.togglePlay);
   const mode = useVisSim((s) => s.mode);
   const setMode = useVisSim((s) => s.setMode);
+  const viewMode = useVisSim((s) => s.viewMode);
+  const setViewMode = useVisSim((s) => s.setViewMode);
   const { conflicts, approverTeamIds } = usePlanAnalysis();
 
   return (
@@ -19,6 +21,15 @@ export default function App() {
         <span className="logo">VisSim</span>
         <span className="muted">Phase 0 — flagship loop prototype</span>
         <div className="grow" />
+        <button className={viewMode === '3d' ? 'active' : ''} onClick={() => setViewMode('3d')}>
+          3D
+        </button>
+        <button className={viewMode === 'top' ? 'active' : ''} onClick={() => setViewMode('top')}>
+          2D
+        </button>
+        <button className={viewMode === 'iso' ? 'active' : ''} onClick={() => setViewMode('iso')}>
+          Iso
+        </button>
         <button className={mode === 'select' ? 'active' : ''} onClick={() => setMode('select')}>
           Select
         </button>

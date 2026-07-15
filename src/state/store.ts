@@ -4,6 +4,8 @@ import { INITIAL_MOVES, SAMPLE_SCENE } from '../domain/sampleScene';
 
 export type Mode = 'select' | 'draw';
 
+export type ViewMode = '3d' | 'top' | 'iso';
+
 interface VisSimState {
   /** The scene the plan runs against. Static in the prototype; data, not a global. */
   scene: SceneDef;
@@ -11,6 +13,8 @@ interface VisSimState {
   playhead: number;
   playing: boolean;
   mode: Mode;
+  /** Camera projection of the one shared model (plan §5.1); never forks plan data. */
+  viewMode: ViewMode;
   draftPath: Vec2[];
   /** Bumped on any plan edit; editing an in-review plan resets approvals (plan §4.3). */
   revision: number;
@@ -21,6 +25,7 @@ interface VisSimState {
   setPlayhead: (t: number) => void;
   togglePlay: () => void;
   setMode: (m: Mode) => void;
+  setViewMode: (v: ViewMode) => void;
   selectMove: (id: string | null) => void;
   retimeMove: (id: string, tStart: number, tEnd: number) => void;
   addDraftPoint: (p: Vec2) => void;
@@ -40,6 +45,7 @@ export const useVisSim = create<VisSimState>((set, get) => ({
   playhead: SAMPLE_SCENE.dayStart + 60,
   playing: false,
   mode: 'select',
+  viewMode: '3d',
   draftPath: [],
   revision: 1,
   approvals: {},
@@ -49,6 +55,7 @@ export const useVisSim = create<VisSimState>((set, get) => ({
   setPlayhead: (t) => set({ playhead: t }),
   togglePlay: () => set((s) => ({ playing: !s.playing })),
   setMode: (m) => set({ mode: m, draftPath: [] }),
+  setViewMode: (v) => set({ viewMode: v }),
   selectMove: (id) => set({ selectedMoveId: id }),
 
   retimeMove: (id, tStart, tEnd) =>

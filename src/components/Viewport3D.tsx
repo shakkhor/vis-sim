@@ -1,10 +1,16 @@
 import { useMemo, useRef } from 'react';
 import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, Html, Line } from '@react-three/drei';
+import {
+  OrbitControls,
+  Html,
+  Line,
+  OrthographicCamera,
+  PerspectiveCamera,
+} from '@react-three/drei';
 import { Vector3 } from 'three';
 import { useVisSim } from '../state/store';
 import { teamColor } from '../domain/scene';
-import { pathLength, pointAlong } from '../domain/engine';
+import { actorPositions } from '../domain/actors';
 import type { Conflict, Move, Resource, SceneDef } from '../domain/types';
 
 function ResourceMesh({
@@ -84,36 +90,22 @@ function Stands() {
 
 /** Actors of one move at the current playhead, staggered along the window. */
 function MoveActors({ scene, move, t }: { scene: SceneDef; move: Move; t: number }) {
-  const total = useMemo(() => pathLength(move.path), [move.path]);
-  const dur = move.tEnd - move.tStart;
-  if (t < move.tStart || t > move.tEnd || total === 0 || dur <= 0) return null;
+  const positions = actorPositions(move, t);
+  if (positions.length === 0) return null;
 
   const isCohort = move.actorKind === 'cohort';
-  const dots = isCohort ? 24 : Math.min(move.count, 8);
-  const staggerSpan = isCohort ? 0.6 : 0.1;
-  const travelSpan = 1 - staggerSpan;
-  const elapsed = (t - move.tStart) / dur;
   const color = teamColor(scene, move.teamId);
-
-  const items: { x: number; z: number; key: number }[] = [];
-  for (let i = 0; i < dots; i++) {
-    const offset = dots > 1 ? (i / (dots - 1)) * staggerSpan : 0;
-    const frac = (elapsed - offset) / travelSpan;
-    if (frac < 0 || frac > 1) continue;
-    const p = pointAlong(move.path, frac * total);
-    items.push({ x: p.x, z: p.z, key: i });
-  }
 
   return (
     <group>
-      {items.map((p) =>
+      {positions.map((p, i) =>
         move.actorKind === 'vehicle' ? (
-          <mesh key={p.key} position={[p.x, 0.8, p.z]}>
+          <mesh key={i} position={[p.x, 0.8, p.z]}>
             <boxGeometry args={[2.2, 1.4, 1.2]} />
             <meshStandardMaterial color={color} />
           </mesh>
         ) : (
-          <mesh key={p.key} position={[p.x, 0.7, p.z]}>
+          <mesh key={i} position={[p.x, 0.7, p.z]}>
             <sphereGeometry args={[isCohort ? 0.45 : 0.55, 12, 12]} />
             <meshStandardMaterial color={color} />
           </mesh>
@@ -160,6 +152,7 @@ export default function Viewport3D({ conflicts }: { conflicts: Conflict[] }) {
   const moves = useVisSim((s) => s.moves);
   const playhead = useVisSim((s) => s.playhead);
   const mode = useVisSim((s) => s.mode);
+  const viewMode = useVisSim((s) => s.viewMode);
   const draftPath = useVisSim((s) => s.draftPath);
   const addDraftPoint = useVisSim((s) => s.addDraftPoint);
   const selectedMoveId = useVisSim((s) => s.selectedMoveId);
@@ -181,11 +174,26 @@ export default function Viewport3D({ conflicts }: { conflicts: Conflict[] }) {
   };
 
   return (
-    <Canvas camera={{ position: [0, 52, 58], fov: 45 }} shadows={false}>
+    <Canvas shadows={false}>
       <color attach="background" args={['#161a24']} />
       <ambientLight intensity={0.7} />
       <directionalLight position={[30, 50, 20]} intensity={1.1} />
       <Playback />
+
+      {viewMode === '3d' && <PerspectiveCamera makeDefault position={[0, 52, 58]} fov={45} />}
+      {viewMode === 'top' && (
+        <OrthographicCamera
+          makeDefault
+          position={[0, 120, 4]}
+          up={[0, 0, -1]}
+          zoom={6}
+          near={0.1}
+          far={600}
+        />
+      )}
+      {viewMode === 'iso' && (
+        <OrthographicCamera makeDefault position={[90, 90, 90]} zoom={6} near={0.1} far={600} />
+      )}
 
       <mesh
         ref={groundRef}
@@ -233,7 +241,13 @@ export default function Viewport3D({ conflicts }: { conflicts: Conflict[] }) {
         </group>
       )}
 
-      <OrbitControls makeDefault maxPolarAngle={Math.PI / 2.2} />
+      <OrbitControls
+        key={viewMode}
+        makeDefault
+        enableRotate={viewMode === '3d'}
+        maxPolarAngle={Math.PI / 2.2}
+        target={viewMode === 'top' ? [0, 0, 4] : [0, 0, 0]}
+      />
     </Canvas>
   );
 }
