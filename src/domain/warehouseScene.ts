@@ -59,6 +59,100 @@ export const WAREHOUSE_SCENE: SceneDef = {
       tags: ['pedestrian-only'],
     },
   ],
+  blocks: [
+    // Racking runs — two double-segment rows flanking the drive aisle inside the racking
+    // zone. The north row breaks at x −6..6 so forklifts turning in from the aisle mouth
+    // (which they cross at x 0) read as driving through a real rack-end gap.
+    {
+      id: 'blk-rack-south-w',
+      kind: 'box',
+      rect: { x: -38, z: -5, w: 34, d: 2.5 },
+      height: 6,
+      color: '#a86a2f',
+    },
+    {
+      id: 'blk-rack-south-e',
+      kind: 'box',
+      rect: { x: 4, z: -5, w: 34, d: 2.5 },
+      height: 6,
+      color: '#a86a2f',
+    },
+    {
+      id: 'blk-rack-north-w',
+      kind: 'box',
+      rect: { x: -38, z: 9, w: 32, d: 2.5 },
+      height: 6,
+      color: '#a86a2f',
+    },
+    {
+      id: 'blk-rack-north-e',
+      kind: 'box',
+      rect: { x: 6, z: 9, w: 32, d: 2.5 },
+      height: 6,
+      color: '#a86a2f',
+    },
+    // Dock canopies — elevated slabs over each dock apron.
+    {
+      id: 'blk-dock1-canopy',
+      kind: 'slab',
+      rect: { x: -44, z: 26, w: 26, d: 12 },
+      height: 0.4,
+      y: 3.6,
+      color: '#3a4258',
+    },
+    {
+      id: 'blk-dock2-canopy',
+      kind: 'slab',
+      rect: { x: 18, z: 26, w: 26, d: 12 },
+      height: 0.4,
+      y: 3.6,
+      color: '#3a4258',
+    },
+    // Perimeter walls around the overall footprint. The north wall leaves dock-door gaps
+    // at x −40..−22 (Dock 1) and x 22..40 (Dock 2).
+    {
+      id: 'blk-wall-south',
+      kind: 'wall',
+      rect: { x: -46, z: -20, w: 92, d: 1 },
+      height: 4,
+      color: '#6b7386',
+    },
+    {
+      id: 'blk-wall-west',
+      kind: 'wall',
+      rect: { x: -46, z: -19, w: 1, d: 58 },
+      height: 4,
+      color: '#6b7386',
+    },
+    {
+      id: 'blk-wall-east',
+      kind: 'wall',
+      rect: { x: 45, z: -19, w: 1, d: 58 },
+      height: 4,
+      color: '#6b7386',
+    },
+    {
+      id: 'blk-wall-north-w',
+      kind: 'wall',
+      rect: { x: -46, z: 39, w: 6, d: 1 },
+      height: 4,
+      color: '#6b7386',
+    },
+    {
+      id: 'blk-wall-north-mid',
+      kind: 'wall',
+      rect: { x: -22, z: 39, w: 44, d: 1 },
+      height: 4,
+      color: '#6b7386',
+    },
+    {
+      id: 'blk-wall-north-e',
+      kind: 'wall',
+      rect: { x: 40, z: 39, w: 6, d: 1 },
+      height: 4,
+      color: '#6b7386',
+    },
+  ],
   rules: [
     {
       id: 'warehouse-no-vehicles-on-walkway',

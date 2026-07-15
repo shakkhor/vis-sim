@@ -11,7 +11,7 @@ import {
 } from './engine';
 import { PHARMA_MOVES, PHARMA_SCENE } from './pharmaScene';
 import { evaluateRules } from './rules';
-import type { Move } from './types';
+import type { Move, Rect } from './types';
 
 const reservations = allReservations(PHARMA_MOVES, PHARMA_SCENE.resources);
 const conflicts = computeConflicts(reservations, PHARMA_SCENE.resources, PHARMA_MOVES);
@@ -61,6 +61,44 @@ describe('PHARMA_SCENE layout', () => {
       expect(move.tStart).toBeGreaterThanOrEqual(PHARMA_SCENE.dayStart);
       expect(move.tEnd).toBeLessThanOrEqual(PHARMA_SCENE.dayEnd);
       expect(move.tStart).toBeLessThan(move.tEnd);
+    }
+  });
+});
+
+describe('PHARMA_SCENE blocks', () => {
+  const blocks = PHARMA_SCENE.blocks ?? [];
+  const connectors = PHARMA_SCENE.resources.filter((r) => r.kind === 'connector');
+
+  /** Strict-inequality overlap: rects that merely share an edge do not overlap. */
+  const rectsOverlap = (a: Rect, b: Rect): boolean =>
+    a.x < b.x + b.w && b.x < a.x + a.w && a.z < b.z + b.d && b.z < a.z + a.d;
+
+  it('defines blocks with unique ids', () => {
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(new Set(blocks.map((b) => b.id)).size).toBe(blocks.length);
+  });
+
+  it('gives every block a finite, positive footprint and height', () => {
+    for (const b of blocks) {
+      expect(Number.isFinite(b.rect.x), `${b.id} x is finite`).toBe(true);
+      expect(Number.isFinite(b.rect.z), `${b.id} z is finite`).toBe(true);
+      for (const [label, value] of [
+        ['w', b.rect.w],
+        ['d', b.rect.d],
+        ['height', b.height],
+      ] as const) {
+        expect(Number.isFinite(value), `${b.id} ${label} is finite`).toBe(true);
+        expect(value, `${b.id} ${label} is positive`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('keeps ground-level block footprints clear of every airlock connector', () => {
+    for (const b of blocks) {
+      if ((b.y ?? 0) > 0) continue; // elevated blocks may span connectors (none here today)
+      for (const c of connectors) {
+        expect(rectsOverlap(b.rect, c.rect), `${b.id} intersects ${c.id}`).toBe(false);
+      }
     }
   });
 });

@@ -34,6 +34,40 @@ describe('warehouse scene layout', () => {
   });
 });
 
+describe('warehouse blocks', () => {
+  const blocks = WAREHOUSE_SCENE.blocks ?? [];
+  const connectors = resources.filter((r) => r.kind === 'connector');
+
+  it('defines blocks with unique ids', () => {
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(new Set(blocks.map((b) => b.id)).size).toBe(blocks.length);
+  });
+
+  it('gives every block a finite, positive footprint and height', () => {
+    for (const b of blocks) {
+      expect(Number.isFinite(b.rect.x), `${b.id} x is finite`).toBe(true);
+      expect(Number.isFinite(b.rect.z), `${b.id} z is finite`).toBe(true);
+      for (const [label, value] of [
+        ['w', b.rect.w],
+        ['d', b.rect.d],
+        ['height', b.height],
+      ] as const) {
+        expect(Number.isFinite(value), `${b.id} ${label} is finite`).toBe(true);
+        expect(value, `${b.id} ${label} is positive`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('keeps ground-level block footprints clear of every connector', () => {
+    for (const b of blocks) {
+      if ((b.y ?? 0) > 0) continue; // elevated slabs (dock canopies) may span connectors
+      for (const c of connectors) {
+        expect(overlaps(b.rect, c.rect), `${b.id} intersects ${c.id}`).toBe(false);
+      }
+    }
+  });
+});
+
 describe('warehouse reservations', () => {
   it('derives aisle-mouth reservations for both forklift runs', () => {
     const resourceIds = (moveId: string) =>

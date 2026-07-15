@@ -136,6 +136,8 @@ for (const scenario of SCENARIOS) {
       expect(restored.scene.dayEnd).toBe(scene.dayEnd);
       expect(restored.scene.teams).toEqual(scene.teams);
       expect(restored.scene.resources).toEqual(scene.resources);
+      expect(restored.scene.rules).toEqual(scene.rules);
+      expect(restored.scene.blocks).toEqual(scene.blocks);
 
       const reAnalyzed = analyze(restored.scene, restored.moves);
       expect(reAnalyzed.conflicts).toEqual(resolved.conflicts);
@@ -239,15 +241,16 @@ describe('flagship loop — pharma — waste/material separation slice', () => {
     expect(restored.scene.dayEnd).toBe(scene.dayEnd);
     expect(restored.scene.teams).toEqual(scene.teams);
     expect(restored.scene.resources).toEqual(scene.resources);
+    expect(restored.scene.rules).toEqual(scene.rules);
+    expect(restored.scene.blocks).toEqual(scene.blocks);
 
     const reAnalyzed = analyze(restored.scene, restored.moves);
     expect(reAnalyzed.blocking).toEqual([]);
     expect(reAnalyzed.approvers).toEqual(resolved.approvers);
-    // Rules are not part of the wire format (deserializePlan rebuilds the scene
-    // without them), so evaluate the scene's authoritative rule set against the
-    // restored geometry and moves.
+    // Rules ride along in the wire format, so the restored document alone is
+    // enough to re-check compliance against the restored geometry and moves.
     const reViolations = evaluateRules(
-      scene.rules ?? [],
+      restored.scene.rules ?? [],
       reAnalyzed.reservations,
       restored.moves,
       restored.scene.resources,

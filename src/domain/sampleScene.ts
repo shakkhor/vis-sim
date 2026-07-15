@@ -58,6 +58,106 @@ export const SAMPLE_SCENE: SceneDef = {
       ownerTeamIds: ['fnb'],
     },
   ],
+  blocks: [
+    // Gate 7 structure — the previously hardcoded viewport pillars/lintel, now data.
+    // Pillars sit flush against the connector edges (x ±4..±5) so the gate stays open.
+    {
+      id: 'blk-gate-pillar-w',
+      kind: 'pillar',
+      rect: { x: -5, z: 8, w: 1, d: 6 },
+      height: 5,
+      color: '#5a6478',
+    },
+    {
+      id: 'blk-gate-pillar-e',
+      kind: 'pillar',
+      rect: { x: 4, z: 8, w: 1, d: 6 },
+      height: 5,
+      color: '#5a6478',
+    },
+    {
+      // Elevated slab spanning the gate: its footprint covers Gate 7 but it floats at y 4.8,
+      // well above head height, so the connector underneath stays walkable.
+      id: 'blk-gate-lintel',
+      kind: 'slab',
+      rect: { x: -5, z: 8, w: 10, d: 6 },
+      height: 0.8,
+      y: 4.8,
+      color: '#5a6478',
+    },
+    // Stepped stand rows behind the Block D concourse (row tops climb 1.5 → 6).
+    {
+      id: 'blk-stand-d-1',
+      kind: 'box',
+      rect: { x: 2, z: -11.75, w: 28, d: 2.5 },
+      height: 1.5,
+      color: '#46506e',
+    },
+    {
+      id: 'blk-stand-d-2',
+      kind: 'box',
+      rect: { x: 2, z: -14.25, w: 28, d: 2.5 },
+      height: 1.5,
+      y: 1.5,
+      color: '#3d4660',
+    },
+    {
+      id: 'blk-stand-d-3',
+      kind: 'box',
+      rect: { x: 2, z: -16.75, w: 28, d: 2.5 },
+      height: 1.5,
+      y: 3,
+      color: '#46506e',
+    },
+    {
+      id: 'blk-stand-d-4',
+      kind: 'box',
+      rect: { x: 2, z: -19.25, w: 28, d: 2.5 },
+      height: 1.5,
+      y: 4.5,
+      color: '#3d4660',
+    },
+    // Stepped stand rows behind the Block C concourse.
+    {
+      id: 'blk-stand-c-1',
+      kind: 'box',
+      rect: { x: -30, z: -11.75, w: 28, d: 2.5 },
+      height: 1.5,
+      color: '#46506e',
+    },
+    {
+      id: 'blk-stand-c-2',
+      kind: 'box',
+      rect: { x: -30, z: -14.25, w: 28, d: 2.5 },
+      height: 1.5,
+      y: 1.5,
+      color: '#3d4660',
+    },
+    {
+      id: 'blk-stand-c-3',
+      kind: 'box',
+      rect: { x: -30, z: -16.75, w: 28, d: 2.5 },
+      height: 1.5,
+      y: 3,
+      color: '#46506e',
+    },
+    {
+      id: 'blk-stand-c-4',
+      kind: 'box',
+      rect: { x: -30, z: -19.25, w: 28, d: 2.5 },
+      height: 1.5,
+      y: 4.5,
+      color: '#3d4660',
+    },
+    // The pitch, beyond the stands.
+    {
+      id: 'blk-pitch',
+      kind: 'slab',
+      rect: { x: -35, z: -43, w: 70, d: 22 },
+      height: 0.1,
+      color: '#2e7d4f',
+    },
+  ],
 };
 
 export const INITIAL_MOVES: Move[] = [

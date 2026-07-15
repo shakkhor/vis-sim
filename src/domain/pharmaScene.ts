@@ -117,6 +117,74 @@ export const PHARMA_SCENE: SceneDef = {
       tags: ['dirty'],
     },
   ],
+  blocks: [
+    // White-model walls (GMP reference-render look). Perimeter hugs the facility footprint
+    // (resources span x −56..58, z −40..42) with a 1–2 unit margin; the south run sits flush
+    // against the change/waste rooms (their south edges are at z −40) and leaves a gap at
+    // x −14..−2 for the change-room entry (the gowning move starts at x −2).
+    {
+      id: 'blk-wall-perim-n',
+      kind: 'wall',
+      rect: { x: -58, z: 43, w: 118, d: 1 },
+      height: 3.5,
+      color: '#e8ebf2',
+    },
+    {
+      id: 'blk-wall-perim-w',
+      kind: 'wall',
+      rect: { x: -58, z: -40, w: 1, d: 83 },
+      height: 3.5,
+      color: '#e8ebf2',
+    },
+    {
+      id: 'blk-wall-perim-e',
+      kind: 'wall',
+      rect: { x: 59, z: -40, w: 1, d: 83 },
+      height: 3.5,
+      color: '#e8ebf2',
+    },
+    {
+      id: 'blk-wall-perim-s-w',
+      kind: 'wall',
+      rect: { x: -58, z: -41, w: 44, d: 1 },
+      height: 3.5,
+      color: '#e8ebf2',
+    },
+    {
+      id: 'blk-wall-perim-s-e',
+      kind: 'wall',
+      rect: { x: -2, z: -41, w: 61, d: 1 },
+      height: 3.5,
+      color: '#e8ebf2',
+    },
+    // Interior walls between corridor-1 and the production block, in the 4-unit strip
+    // between the corridor's north edge (z −4) and dispensing (z 0). The opening at
+    // x −13..4 clears PAL-1 (x −6..2) and the waste-egress crossing at x −10.
+    {
+      id: 'blk-wall-int-c1-w',
+      kind: 'wall',
+      rect: { x: -46, z: -4, w: 33, d: 1 },
+      height: 3.5,
+      color: '#e8ebf2',
+    },
+    {
+      id: 'blk-wall-int-c1-e',
+      kind: 'wall',
+      rect: { x: 4, z: -4, w: 44, d: 1 },
+      height: 3.5,
+      color: '#e8ebf2',
+    },
+    // Interior wall between the production block and corridor-2, on the corridor's south
+    // edge (z 15..16). No airlock sits on this side — MAL-1 (z 4..10) routes east–west
+    // between the two interior walls — so the run is continuous.
+    {
+      id: 'blk-wall-int-c2',
+      kind: 'wall',
+      rect: { x: -46, z: 15, w: 94, d: 1 },
+      height: 3.5,
+      color: '#e8ebf2',
+    },
+  ],
   rules: [
     {
       id: 'pharma-no-vehicles-clean',
