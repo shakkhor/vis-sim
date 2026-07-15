@@ -76,6 +76,74 @@ describe('reservations', () => {
     expect(reservationsForMove(makeMove({ path: [{ x: 0, z: 0 }] }), resources)).toEqual([]);
     expect(reservationsForMove(makeMove({ tStart: 10, tEnd: 10 }), resources)).toEqual([]);
   });
+
+  it('ignores a segment that only grazes a rect corner', () => {
+    // This diagonal touches exactly kioskd's corner (32, 16) and plaza's corner
+    // (30, 14) — both zero-measure intersections, so no reservations at all.
+    const move = makeMove({
+      path: [
+        { x: 28, z: 12 },
+        { x: 36, z: 20 },
+      ],
+    });
+    expect(reservationsForMove(move, resources)).toEqual([]);
+  });
+
+  it('reserves the full move window for a path entirely inside a rect', () => {
+    // Both endpoints sit inside dconc (x ∈ [2, 30], z ∈ [-8, 8]) and nothing else.
+    const move = makeMove({
+      path: [
+        { x: 6, z: -4 },
+        { x: 26, z: -4 },
+      ],
+      tStart: 0,
+      tEnd: 10,
+    });
+    const reservations = reservationsForMove(move, resources);
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0].resourceId).toBe('dconc');
+    expect(reservations[0].t0).toBeCloseTo(0, 9);
+    expect(reservations[0].t1).toBeCloseTo(10, 9);
+  });
+
+  it('yields separate reservations when a path crosses the same rect twice', () => {
+    // Crosses gate7 (x ∈ [-4, 4], z ∈ [8, 14]) left-to-right at z=11, doubles
+    // back at z=9. Total length 34; crossings span arc lengths [4,12] and [22,30].
+    const move = makeMove({
+      path: [
+        { x: -8, z: 11 },
+        { x: 8, z: 11 },
+        { x: 8, z: 9 },
+        { x: -8, z: 9 },
+      ],
+      tStart: 0,
+      tEnd: 34,
+    });
+    const gate = reservationsForMove(move, resources).filter((r) => r.resourceId === 'gate7');
+    expect(gate).toHaveLength(2);
+    expect(gate[0].t0).toBeCloseTo(4, 9);
+    expect(gate[0].t1).toBeCloseTo(12, 9);
+    expect(gate[1].t0).toBeCloseTo(22, 9);
+    expect(gate[1].t1).toBeCloseTo(30, 9);
+  });
+
+  it('handles a zero-length segment and merges intervals across it', () => {
+    // Duplicate vertex inside gate7: the crossing must stay one reservation.
+    const move = makeMove({
+      path: [
+        { x: -8, z: 11 },
+        { x: 0, z: 11 },
+        { x: 0, z: 11 },
+        { x: 8, z: 11 },
+      ],
+      tStart: 0,
+      tEnd: 16,
+    });
+    const gate = reservationsForMove(move, resources).filter((r) => r.resourceId === 'gate7');
+    expect(gate).toHaveLength(1);
+    expect(gate[0].t0).toBeCloseTo(4, 9);
+    expect(gate[0].t1).toBeCloseTo(12, 9);
+  });
 });
 
 describe('conflicts', () => {

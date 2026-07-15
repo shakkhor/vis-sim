@@ -3,7 +3,8 @@
 
 import type { Conflict, Move, Rect, Reservation, Resource, Vec2 } from './types';
 
-const SAMPLES = 240;
+/** Tolerance for merging adjacent arc-length intervals and dropping zero-measure grazes. */
+const MERGE_EPS = 1e-9;
 
 export function pathLength(path: Vec2[]): number {
   let len = 0;
@@ -31,13 +32,47 @@ export function pointAlong(path: Vec2[], dist: number): Vec2 {
   return path[path.length - 1];
 }
 
-function inRect(p: Vec2, r: Rect): boolean {
-  return p.x >= r.x && p.x <= r.x + r.w && p.z >= r.z && p.z <= r.z + r.d;
+/**
+ * Parametric interval [t0, t1] ⊆ [0, 1] of segment a→b inside rect r
+ * (Liang–Barsky clipping against the closed rect), or null if disjoint.
+ */
+function clipSegmentToRect(a: Vec2, b: Vec2, r: Rect): [number, number] | null {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  // (p, q) pairs for the four slab boundaries: left, right, near, far.
+  const boundaries: Array<[number, number]> = [
+    [-dx, a.x - r.x],
+    [dx, r.x + r.w - a.x],
+    [-dz, a.z - r.z],
+    [dz, r.z + r.d - a.z],
+  ];
+  let t0 = 0;
+  let t1 = 1;
+  for (const [p, q] of boundaries) {
+    if (p === 0) {
+      if (q < 0) return null; // parallel to this boundary and outside its slab
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) {
+      // entering
+      if (t > t1) return null;
+      if (t > t0) t0 = t;
+    } else {
+      // exiting
+      if (t < t0) return null;
+      if (t < t1) t1 = t;
+    }
+  }
+  return t0 <= t1 ? [t0, t1] : null;
 }
 
 /**
- * Compute the reservations a move makes by sampling its path and mapping
- * arc-length fractions to the move's time window (constant-speed assumption).
+ * Compute the reservations a move makes by exactly clipping each path segment
+ * against each resource rect, merging contiguous arc-length intervals across
+ * segments, and mapping arc-length fractions to the move's time window
+ * (constant-speed assumption). Disjoint crossings of the same resource yield
+ * separate reservations; zero-measure grazes (e.g. touching a corner) yield none.
  */
 export function reservationsForMove(move: Move, resources: Resource[]): Reservation[] {
   const total = pathLength(move.path);
@@ -45,22 +80,38 @@ export function reservationsForMove(move: Move, resources: Resource[]): Reservat
   if (total === 0 || dur <= 0 || move.path.length < 2) return [];
   const out: Reservation[] = [];
   for (const r of resources) {
-    let startFrac: number | null = null;
-    for (let i = 0; i <= SAMPLES; i++) {
-      const frac = i / SAMPLES;
-      const inside = inRect(pointAlong(move.path, frac * total), r.rect);
-      if (inside && startFrac === null) startFrac = frac;
-      const closing = startFrac !== null && (!inside || i === SAMPLES);
-      if (closing) {
-        const endFrac = inside ? frac : (i - 1) / SAMPLES;
-        out.push({
-          resourceId: r.id,
-          moveId: move.id,
-          t0: move.tStart + startFrac! * dur,
-          t1: move.tStart + endFrac * dur,
-        });
-        startFrac = null;
+    // Arc-length-fraction intervals where the path lies inside this rect.
+    const intervals: Array<[number, number]> = [];
+    let cum = 0;
+    for (let i = 1; i < move.path.length; i++) {
+      const a = move.path[i - 1];
+      const b = move.path[i];
+      const segLen = Math.hypot(b.x - a.x, b.z - a.z);
+      if (segLen === 0) continue; // zero-length segment: contributes no arc length
+      const clipped = clipSegmentToRect(a, b, r.rect);
+      if (clipped) {
+        intervals.push([(cum + clipped[0] * segLen) / total, (cum + clipped[1] * segLen) / total]);
       }
+      cum += segLen;
+    }
+    // Segments are visited in path order, so intervals are already sorted by start.
+    const merged: Array<[number, number]> = [];
+    for (const iv of intervals) {
+      const last = merged[merged.length - 1];
+      if (last && iv[0] <= last[1] + MERGE_EPS) {
+        last[1] = Math.max(last[1], iv[1]);
+      } else {
+        merged.push([iv[0], iv[1]]);
+      }
+    }
+    for (const [f0, f1] of merged) {
+      if (f1 - f0 <= MERGE_EPS) continue; // corner/edge graze: no occupancy
+      out.push({
+        resourceId: r.id,
+        moveId: move.id,
+        t0: move.tStart + f0 * dur,
+        t1: move.tStart + f1 * dur,
+      });
     }
   }
   return out;
@@ -73,7 +124,7 @@ export function allReservations(moves: Move[], resources: Resource[]): Reservati
 /**
  * Conflicts: two reservations on the same resource with overlapping windows
  * from different moves. Connector overlaps are blocking; zone overlaps between
- * different teams are warnings. (Rules engine comes later — plan §4.3.)
+ * different teams are warnings. (Tag-based rules live in rules.ts — plan §4.3.)
  */
 export function computeConflicts(
   reservations: Reservation[],
