@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import {
+  Grid,
   OrbitControls,
   Html,
   Line,
@@ -11,8 +12,10 @@ import { Vector3 } from 'three';
 import { useVisSim } from '../state/store';
 import { teamColor } from '../domain/scene';
 import { actorPositions } from '../domain/actors';
-import { snap } from '../domain/sceneEdit';
+import { snap, snapRectToNeighbors } from '../domain/sceneEdit';
 import type {
+  Block,
+  BlockKind,
   Conflict,
   Move,
   Rect,
@@ -26,10 +29,16 @@ import type {
  * viewport never requests a rect the domain would clamp differently. */
 const MIN_SIZE = 2;
 
+/** Ground plane footprint: 130×90 centered on (0, 4). Guides/grid span it. */
+const GROUND = { minX: -65, maxX: 65, minZ: -41, maxZ: 49 } as const;
+
+/** Alignment guide reported by the domain snapper, rendered while dragging. */
+type SnapGuide = { axis: 'x' | 'z'; value: number };
+
 /** One in-flight drag gesture. Pointer-down on an editable object arms this;
  * the large ground mesh supplies ground-plane intersections on pointer-move. */
 type DragState =
-  | { kind: 'move'; id: string; start: Vec2; applied: Vec2 }
+  | { kind: 'move'; id: string; start: Vec2; startRect: Rect; last: Rect | null }
   | { kind: 'resize'; id: string; min: Vec2; last: Rect | null }
   | { kind: 'waypoint'; moveId: string; index: number; last: Vec2 | null };
 
@@ -47,32 +56,41 @@ function ResourceMesh({
   resource,
   conflictActive,
   selected,
+  hovered,
   onSelect,
   onDragStart,
+  onHoverChange,
 }: {
   scene: SceneDef;
   resource: Resource;
   conflictActive: boolean;
   selected: boolean;
+  hovered: boolean;
   onSelect?: (e: ThreeEvent<MouseEvent>) => void;
   onDragStart?: (e: ThreeEvent<PointerEvent>) => void;
+  onHoverChange?: (hovering: boolean) => void;
 }) {
+  const viewMode = useVisSim((s) => s.viewMode);
+  const labelDistanceFactor = viewMode === '3d' ? 90 : undefined;
   const { rect, kind } = resource;
   const color = kind === 'connector' ? '#e8c34a' : teamColor(scene, resource.ownerTeamIds[0]);
   const baseOpacity = kind === 'connector' ? 0.55 : 0.28;
+  const opacity = selected
+    ? Math.min(1, baseOpacity + 0.3)
+    : hovered
+      ? Math.min(1, baseOpacity + 0.14)
+      : baseOpacity;
   return (
     <group
       position={[rect.x + rect.w / 2, 0, rect.z + rect.d / 2]}
       onClick={onSelect}
       onPointerDown={onDragStart}
+      onPointerOver={onHoverChange ? () => onHoverChange(true) : undefined}
+      onPointerOut={onHoverChange ? () => onHoverChange(false) : undefined}
     >
       <mesh position={[0, 0.15, 0]}>
         <boxGeometry args={[rect.w, 0.3, rect.d]} />
-        <meshStandardMaterial
-          color={color}
-          transparent
-          opacity={selected ? Math.min(1, baseOpacity + 0.3) : baseOpacity}
-        />
+        <meshStandardMaterial color={color} transparent opacity={opacity} />
       </mesh>
       {selected && (
         <Line
@@ -93,7 +111,14 @@ function ResourceMesh({
           <meshStandardMaterial color="#ff3b3b" transparent opacity={0.55} />
         </mesh>
       )}
-      <Html center distanceFactor={90} position={[0, 1.4, 0]} style={{ pointerEvents: 'none' }}>
+      {/* distanceFactor only works under a perspective camera; under the orthographic
+          2D/Iso cameras it inflates labels to screen size, so use fixed CSS sizing there. */}
+      <Html
+        center
+        distanceFactor={labelDistanceFactor}
+        position={[0, 1.4, 0]}
+        style={{ pointerEvents: 'none' }}
+      >
         <div className="zone-label">
           {resource.name}
           {resource.tags && resource.tags.length > 0 && (
@@ -120,43 +145,29 @@ function ResourceMesh({
   );
 }
 
-function GatePillars() {
-  return (
-    <group>
-      {[-4.5, 4.5].map((x) => (
-        <mesh key={x} position={[x, 2.5, 11]}>
-          <boxGeometry args={[1, 5, 6]} />
-          <meshStandardMaterial color="#5a6478" />
-        </mesh>
-      ))}
-      <mesh position={[0, 5.2, 11]}>
-        <boxGeometry args={[10, 0.8, 6]} />
-        <meshStandardMaterial color="#5a6478" />
-      </mesh>
-    </group>
-  );
-}
+/** Renderer defaults when a block does not carry an explicit color. */
+const BLOCK_COLORS: Record<BlockKind, string> = {
+  wall: '#8892aa',
+  pillar: '#5a6478',
+  box: '#46506e',
+  slab: '#3a4257',
+};
 
-function Stands() {
-  const steps = [0, 1, 2, 3];
+/** Passive scene structure (walls, pillars, ...). Never interactive: raycast is
+ * disabled so blocks can never intercept or occlude resource pointer events. */
+function Blocks({ blocks }: { blocks: Block[] }) {
   return (
     <group>
-      {steps.map((i) => (
-        <mesh key={`d${i}`} position={[16, 0.75 + i * 1.5, -10.5 - i * 2.5]}>
-          <boxGeometry args={[28, 1.5, 2.5]} />
-          <meshStandardMaterial color={i % 2 ? '#3d4660' : '#46506e'} />
+      {blocks.map((b) => (
+        <mesh
+          key={b.id}
+          position={[b.rect.x + b.rect.w / 2, (b.y ?? 0) + b.height / 2, b.rect.z + b.rect.d / 2]}
+          raycast={() => null}
+        >
+          <boxGeometry args={[b.rect.w, b.height, b.rect.d]} />
+          <meshStandardMaterial color={b.color ?? BLOCK_COLORS[b.kind]} />
         </mesh>
       ))}
-      {steps.map((i) => (
-        <mesh key={`c${i}`} position={[-16, 0.75 + i * 1.5, -10.5 - i * 2.5]}>
-          <boxGeometry args={[28, 1.5, 2.5]} />
-          <meshStandardMaterial color={i % 2 ? '#3d4660' : '#46506e'} />
-        </mesh>
-      ))}
-      <mesh position={[0, 0.05, -32]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[70, 22]} />
-        <meshStandardMaterial color="#2e7d4f" />
-      </mesh>
     </group>
   );
 }
@@ -239,7 +250,6 @@ function SceneBody({
   const selectedResourceId = useVisSim((s) => s.selectedResourceId);
   const pendingAdd = useVisSim((s) => s.pendingAdd);
   const selectResource = useVisSim((s) => s.selectResource);
-  const moveResourceBy = useVisSim((s) => s.moveResourceBy);
   const resizeResourceTo = useVisSim((s) => s.resizeResourceTo);
   const addResourceAt = useVisSim((s) => s.addResourceAt);
   const moveMoveWaypoint = useVisSim((s) => s.moveMoveWaypoint);
@@ -256,6 +266,14 @@ function SceneBody({
   // Two-click create gesture (US-5): first click anchors, move previews.
   const [drawAnchor, setDrawAnchor] = useState<Vec2 | null>(null);
   const [drawCursor, setDrawCursor] = useState<Vec2 | null>(null);
+  // Alignment guides from the domain edge-snapper; only live during a drag.
+  const [guides, setGuides] = useState<SnapGuide[]>([]);
+  // Hovered resource (scene-edit affordance); cleared when leaving the mode.
+  const [hoveredResourceId, setHoveredResourceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (mode !== 'scene') setHoveredResourceId(null);
+  }, [mode]);
 
   const beginDrag = useCallback((state: DragState) => {
     dragRef.current = state;
@@ -265,6 +283,7 @@ function SceneBody({
   const endDrag = useCallback(() => {
     if (!dragRef.current) return;
     dragRef.current = null;
+    setGuides([]);
     if (controlsRef.current) controlsRef.current.enabled = true;
   }, []);
 
@@ -316,31 +335,47 @@ function SceneBody({
     selectResource(null); // empty-ground click clears selection (US-1)
   };
 
-  // All drag gestures resolve against the ground plane here. Store calls are
-  // deltas-since-last-applied-step (move) or absolute snapped targets guarded
-  // by a last-applied check (resize/waypoint), so nothing compounds and the
-  // store is only hit when the snapped value actually changes.
+  // All drag gestures resolve against the ground plane here. Move/resize both
+  // compute an absolute target rect, run it through the domain edge-snapper
+  // (grid + neighbor magnetism), and apply via resizeResourceTo — guarded by a
+  // last-applied check so the store is only hit when the snapped rect changes.
   const onGroundPointerMove = (e: ThreeEvent<PointerEvent>) => {
     const drag = dragRef.current;
     if (drag) {
       const p = { x: e.point.x, z: e.point.z };
       if (drag.kind === 'move') {
-        const dx = snap(p.x - drag.start.x);
-        const dz = snap(p.z - drag.start.z);
-        if (dx !== drag.applied.x || dz !== drag.applied.z) {
-          moveResourceBy(drag.id, dx - drag.applied.x, dz - drag.applied.z);
-          drag.applied = { x: dx, z: dz };
+        const target: Rect = {
+          x: drag.startRect.x + (p.x - drag.start.x),
+          z: drag.startRect.z + (p.z - drag.start.z),
+          w: drag.startRect.w,
+          d: drag.startRect.d,
+        };
+        const snapped = snapRectToNeighbors(scene.resources, drag.id, target);
+        const next = snapped.rect;
+        if (!drag.last || next.x !== drag.last.x || next.z !== drag.last.z) {
+          resizeResourceTo(drag.id, next);
+          drag.last = next;
+          setGuides(snapped.guides);
         }
       } else if (drag.kind === 'resize') {
-        const next: Rect = {
+        const target: Rect = {
           x: drag.min.x,
           z: drag.min.z,
           w: Math.max(MIN_SIZE, snap(p.x) - drag.min.x),
           d: Math.max(MIN_SIZE, snap(p.z) - drag.min.z),
         };
-        if (!drag.last || next.w !== drag.last.w || next.d !== drag.last.d) {
+        const snapped = snapRectToNeighbors(scene.resources, drag.id, target);
+        const next = snapped.rect;
+        if (
+          !drag.last ||
+          next.x !== drag.last.x ||
+          next.z !== drag.last.z ||
+          next.w !== drag.last.w ||
+          next.d !== drag.last.d
+        ) {
           resizeResourceTo(drag.id, next);
           drag.last = next;
+          setGuides(snapped.guides);
         }
       } else {
         const sp = { x: snap(p.x), z: snap(p.z) };
@@ -380,6 +415,23 @@ function SceneBody({
         <meshStandardMaterial color="#232939" />
       </mesh>
 
+      {mode === 'scene' && (
+        <Grid
+          position={[0, 0.02, 4]}
+          args={[130, 90]}
+          cellSize={1}
+          cellThickness={0.5}
+          cellColor="#323a54"
+          sectionSize={5}
+          sectionThickness={1}
+          sectionColor="#3d476a"
+          fadeDistance={400}
+          fadeStrength={0}
+          infiniteGrid={false}
+          followCamera={false}
+        />
+      )}
+
       {scene.resources.map((r) => (
         <ResourceMesh
           key={r.id}
@@ -387,6 +439,7 @@ function SceneBody({
           resource={r}
           conflictActive={activeConflictResourceIds.has(r.id)}
           selected={mode === 'scene' && r.id === selectedResourceId}
+          hovered={mode === 'scene' && r.id === hoveredResourceId}
           onSelect={
             editable
               ? (e) => {
@@ -404,11 +457,37 @@ function SceneBody({
                     kind: 'move',
                     id: r.id,
                     start: { x: e.point.x, z: e.point.z },
-                    applied: { x: 0, z: 0 },
+                    startRect: { ...r.rect },
+                    last: null,
                   });
                 }
               : undefined
           }
+          onHoverChange={
+            mode === 'scene'
+              ? (hovering) =>
+                  setHoveredResourceId((prev) => (hovering ? r.id : prev === r.id ? null : prev))
+              : undefined
+          }
+        />
+      ))}
+
+      {guides.map((g) => (
+        <Line
+          key={`${g.axis}-${g.value}`}
+          points={
+            g.axis === 'x'
+              ? [
+                  [g.value, 0.05, GROUND.minZ],
+                  [g.value, 0.05, GROUND.maxZ],
+                ]
+              : [
+                  [GROUND.minX, 0.05, g.value],
+                  [GROUND.maxX, 0.05, g.value],
+                ]
+          }
+          color="#9db8ff"
+          lineWidth={1.5}
         />
       ))}
 
@@ -451,8 +530,7 @@ function SceneBody({
         </mesh>
       )}
 
-      <GatePillars />
-      <Stands />
+      <Blocks blocks={scene.blocks ?? []} />
 
       {moves.map((m) => (
         <group key={m.id}>
@@ -520,13 +598,13 @@ export default function Viewport3D({
           makeDefault
           position={[0, 120, 4]}
           up={[0, 0, -1]}
-          zoom={6}
+          zoom={9}
           near={0.1}
           far={600}
         />
       )}
       {viewMode === 'iso' && (
-        <OrthographicCamera makeDefault position={[90, 90, 90]} zoom={6} near={0.1} far={600} />
+        <OrthographicCamera makeDefault position={[90, 90, 90]} zoom={9} near={0.1} far={600} />
       )}
 
       <SceneBody conflicts={conflicts} violations={violations} />
