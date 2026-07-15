@@ -2,16 +2,18 @@
 import { useMemo } from 'react';
 import { useVisSim } from './store';
 import { allReservations, computeConflicts, requiredApproverTeamIds } from '../domain/engine';
-import type { Conflict, Reservation } from '../domain/types';
+import { evaluateRules } from '../domain/rules';
+import type { Conflict, Reservation, RuleViolation } from '../domain/types';
 
 export interface PlanAnalysis {
   reservations: Reservation[];
   conflicts: Conflict[];
   blockingConflicts: Conflict[];
   approverTeamIds: string[];
+  violations: RuleViolation[];
 }
 
-/** Recomputes reservations → conflicts → approvers whenever the plan changes. */
+/** Recomputes reservations → conflicts → violations → approvers whenever the plan changes. */
 export function usePlanAnalysis(): PlanAnalysis {
   const moves = useVisSim((s) => s.moves);
   const scene = useVisSim((s) => s.scene);
@@ -23,6 +25,7 @@ export function usePlanAnalysis(): PlanAnalysis {
       conflicts,
       blockingConflicts: conflicts.filter((c) => c.blocking),
       approverTeamIds: requiredApproverTeamIds(reservations, scene.resources, scene.authorTeamId),
+      violations: evaluateRules(scene.rules ?? [], reservations, moves, scene.resources),
     };
   }, [moves, scene]);
 }
