@@ -29,6 +29,8 @@ export interface Resource {
   kind: ResourceKind;
   rect: Rect;
   ownerTeamIds: string[];
+  /** Optional semantic tags (e.g. 'clean', 'sterile') consumed by the rules engine. */
+  tags?: string[];
 }
 
 export type ActorKind = 'cohort' | 'staff' | 'vehicle' | 'material';
