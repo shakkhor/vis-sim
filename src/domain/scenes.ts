@@ -3,6 +3,7 @@
 import type { Move, SceneDef } from './types';
 import { INITIAL_MOVES, SAMPLE_SCENE } from './sampleScene';
 import { WAREHOUSE_MOVES, WAREHOUSE_SCENE } from './warehouseScene';
+import { PHARMA_MOVES, PHARMA_SCENE } from './pharmaScene';
 
 export interface SceneEntry {
   scene: SceneDef;
@@ -11,6 +12,7 @@ export interface SceneEntry {
 }
 
 export const SCENES: SceneEntry[] = [
+  { scene: PHARMA_SCENE, initialMoves: PHARMA_MOVES, planName: 'Batch Changeover — Line 2' },
   { scene: SAMPLE_SCENE, initialMoves: INITIAL_MOVES, planName: 'Matchday — Aug 12' },
   { scene: WAREHOUSE_SCENE, initialMoves: WAREHOUSE_MOVES, planName: 'Shift Plan — AM' },
 ];
