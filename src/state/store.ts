@@ -77,6 +77,9 @@ interface VisSimState {
   selectedBlockId: string | null;
   /** Armed draw tool in scene-edit mode (PRD US-5): resources or passive blocks. */
   pendingAdd: 'zone' | 'connector' | 'wall' | 'box' | null;
+  /** "View as team" reviewer focus (plan §5.4). Pure view state: never undoable,
+   * never persisted, and cleared whenever the plan swaps (setScene/newScene). */
+  focusTeamId: string | null;
   /** Mirrors of the module-level history stacks, for reactive UI (undo/redo buttons). */
   canUndo: boolean;
   canRedo: boolean;
@@ -106,6 +109,8 @@ interface VisSimState {
   /** Selecting a block clears the resource selection (and vice versa). */
   selectBlock: (id: string | null) => void;
   setPendingAdd: (kind: 'zone' | 'connector' | 'wall' | 'box' | null) => void;
+  /** Plain setter — toggle semantics belong to callers. */
+  setFocusTeam: (id: string | null) => void;
   moveResourceBy: (id: string, dx: number, dz: number) => void;
   resizeResourceTo: (id: string, rect: Rect) => void;
   updateResourceMeta: (
@@ -355,6 +360,7 @@ export const useVisSim = create<VisSimState>((set, get) => {
     selectedResourceId: null,
     selectedBlockId: null,
     pendingAdd: null,
+    focusTeamId: null,
     canUndo: false,
     canRedo: false,
     ...invalidate,
@@ -376,6 +382,7 @@ export const useVisSim = create<VisSimState>((set, get) => {
     selectedResourceId: null,
     selectedBlockId: null,
     pendingAdd: null,
+    focusTeamId: null,
     canUndo: false,
     canRedo: false,
     ui: loadPersistedUi(),
@@ -537,6 +544,7 @@ export const useVisSim = create<VisSimState>((set, get) => {
     selectResource: (id) => set({ selectedResourceId: id, selectedBlockId: null }),
     selectBlock: (id) => set({ selectedBlockId: id, selectedResourceId: null }),
     setPendingAdd: (kind) => set({ pendingAdd: kind }),
+    setFocusTeam: (id) => set({ focusTeamId: id }),
 
     // Scene edits below delegate geometry/validation to src/domain/sceneEdit and
     // always bump revision + clear approvals (PRD US-8: scene edits invalidate).

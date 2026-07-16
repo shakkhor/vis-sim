@@ -1066,6 +1066,56 @@ describe('ui slice (panel chrome)', () => {
   });
 });
 
+describe('setFocusTeam ("view as team" focus)', () => {
+  it('sets and clears the focused team', () => {
+    useVisSim.getState().setFocusTeam('team-b');
+    expect(useVisSim.getState().focusTeamId).toBe('team-b');
+
+    useVisSim.getState().setFocusTeam(null);
+
+    expect(useVisSim.getState().focusTeamId).toBeNull();
+  });
+
+  it('never touches revision, approvals, published, or undo history', () => {
+    useVisSim.setState({ approvals: { 'team-b': 'approved' }, published: true });
+
+    useVisSim.getState().setFocusTeam('team-b');
+    useVisSim.getState().setFocusTeam(null);
+
+    const s = useVisSim.getState();
+    expect(s.revision).toBe(1);
+    expect(s.approvals).toEqual({ 'team-b': 'approved' });
+    expect(s.published).toBe(true);
+    expect(s.canUndo).toBe(false);
+    expect(s.canRedo).toBe(false);
+  });
+
+  it('is cleared when switching scenes', () => {
+    useVisSim.getState().setFocusTeam('team-b');
+
+    useVisSim.getState().setScene('stadium-slice');
+
+    expect(useVisSim.getState().focusTeamId).toBeNull();
+  });
+
+  it('is cleared by newScene', () => {
+    useVisSim.getState().setFocusTeam('team-b');
+
+    useVisSim.getState().newScene();
+
+    expect(useVisSim.getState().focusTeamId).toBeNull();
+  });
+
+  it('survives plan edits and undo (pure view state, outside history)', () => {
+    useVisSim.getState().setFocusTeam('team-b');
+
+    useVisSim.getState().retimeMove('move-a', 610, 670);
+    useVisSim.getState().undo();
+
+    expect(useVisSim.getState().focusTeamId).toBe('team-b');
+  });
+});
+
 describe('selectBlock / selection mutual exclusivity', () => {
   it('selectBlock sets the block selection and clears the resource selection', () => {
     useVisSim.setState({ selectedResourceId: 'zone-1' });
