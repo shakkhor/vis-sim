@@ -3,7 +3,15 @@ import { useVisSim } from '../state/store';
 import { resourceById, teamById } from '../domain/scene';
 import { fmtTime } from '../domain/engine';
 import { generateBriefingHtml } from '../export/briefing';
-import type { ActorKind, Conflict, Reservation, RuleViolation } from '../domain/types';
+import { SCENES } from '../domain/scenes';
+import type {
+  ActorKind,
+  Conflict,
+  Move,
+  Reservation,
+  RuleViolation,
+  SceneDef,
+} from '../domain/types';
 
 interface Props {
   reservations: Reservation[];
@@ -95,6 +103,143 @@ function DraftForm() {
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Lowercased, hyphen-separated team id derived from a display name. */
+function slugifyTeamId(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/** Why `teamId` cannot be removed from the scene right now, or null if it can. */
+function removalBlocker(scene: SceneDef, moves: Move[], teamId: string): string | null {
+  if (teamId === scene.authorTeamId) return 'the authoring team cannot be removed';
+  const owned = scene.resources.find(
+    (r) => r.ownerTeamIds.length === 1 && r.ownerTeamIds[0] === teamId,
+  );
+  if (owned) return `sole owner of ${owned.name} — reassign it first`;
+  const move = moves.find((m) => m.teamId === teamId);
+  if (move) return `executes ${move.name} — reassign or delete that move first`;
+  return null;
+}
+
+function SceneCard() {
+  const scene = useVisSim((s) => s.scene);
+  const moves = useVisSim((s) => s.moves);
+  const renameActiveScene = useVisSim((s) => s.renameActiveScene);
+  const addTeamToScene = useVisSim((s) => s.addTeamToScene);
+  const updateTeamInScene = useVisSim((s) => s.updateTeamInScene);
+  const removeTeamFromScene = useVisSim((s) => s.removeTeamFromScene);
+  const deleteCustomScene = useVisSim((s) => s.deleteCustomScene);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [newTeamColor, setNewTeamColor] = useState('#4f8ef7');
+
+  const isCustom = !SCENES.some((entry) => entry.scene.id === scene.id);
+
+  const commitRename = (raw: string) => {
+    const name = raw.trim();
+    if (name && name !== scene.name) renameActiveScene(name);
+  };
+
+  const addTeam = () => {
+    const name = newTeamName.trim();
+    if (!name) return;
+    const base = slugifyTeamId(name) || 'team';
+    let id = base;
+    let n = 2;
+    while (scene.teams.some((t) => t.id === id)) id = `${base}-${n++}`;
+    addTeamToScene({ id, name, color: newTeamColor });
+    setNewTeamName('');
+  };
+
+  return (
+    <div className="card">
+      <h3>Scene</h3>
+      <label>
+        Name{' '}
+        <input
+          key={scene.id}
+          defaultValue={scene.name}
+          onBlur={(e) => commitRename(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+          }}
+        />
+      </label>
+      <p className="muted small">Teams (own resources, execute moves, grant approvals):</p>
+      {scene.teams.map((t) => {
+        const blocker = removalBlocker(scene, moves, t.id);
+        return (
+          <div className="row" key={t.id}>
+            <input
+              type="color"
+              value={t.color}
+              title={`${t.name} color`}
+              aria-label={`${t.name} color`}
+              onChange={(e) => updateTeamInScene(t.id, { color: e.target.value })}
+            />
+            <input
+              className="grow"
+              defaultValue={t.name}
+              aria-label={`${t.name} name`}
+              onBlur={(e) => {
+                const name = e.target.value.trim();
+                if (name && name !== t.name) updateTeamInScene(t.id, { name });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+              }}
+            />
+            <button
+              className="danger small"
+              disabled={blocker !== null}
+              title={blocker ? `Cannot remove: ${blocker}` : `Remove ${t.name}`}
+              onClick={() => removeTeamFromScene(t.id)}
+            >
+              ✕
+            </button>
+          </div>
+        );
+      })}
+      <div className="row">
+        <input
+          type="color"
+          value={newTeamColor}
+          title="New team color"
+          aria-label="New team color"
+          onChange={(e) => setNewTeamColor(e.target.value)}
+        />
+        <input
+          className="grow"
+          placeholder="New team name"
+          value={newTeamName}
+          onChange={(e) => setNewTeamName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') addTeam();
+          }}
+        />
+        <button disabled={!newTeamName.trim()} onClick={addTeam}>
+          Add
+        </button>
+      </div>
+      {isCustom && (
+        <div className="row">
+          <button
+            className="danger"
+            onClick={() => {
+              const message = `Delete scene "${scene.name}" and its plan? This cannot be undone.`;
+              if (window.confirm(message)) deleteCustomScene(scene.id);
+            }}
+          >
+            Delete scene
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -236,6 +381,7 @@ export default function SidePanel({ reservations, conflicts, approverTeamIds, vi
       </div>
 
       {mode === 'draw' && <DraftForm />}
+      {mode === 'scene' && <SceneCard />}
       {mode === 'scene' && <Inspector reservations={reservations} />}
 
       <div className="card">
