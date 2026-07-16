@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Move, SceneDef } from '../domain/types';
+import type { Move, Rule, SceneDef } from '../domain/types';
 import { SCENES, sceneEntryById } from '../domain/scenes';
 import { listPersistedCustomScenes, nextLeftRail, useVisSim } from './store';
 
@@ -29,6 +29,18 @@ const makeScene = (): SceneDef => ({
   authorTeamId: 'team-a',
   dayStart: 480,
   dayEnd: 1200,
+  blocks: [
+    { id: 'block-1', kind: 'wall', rect: { x: 0, z: 8, w: 6, d: 0.5 }, height: 3 },
+    { id: 'block-2', kind: 'box', rect: { x: 10, z: 8, w: 2, d: 2 }, height: 2, color: '#333333' },
+  ],
+});
+
+const makeRule = (id: string): Rule => ({
+  id,
+  description: `Rule ${id}`,
+  kind: 'forbidden-entry',
+  actorKinds: ['vehicle'],
+  resourceTags: ['clean'],
 });
 
 const makeMove = (overrides: Partial<Move> = {}): Move => ({
@@ -71,6 +83,7 @@ beforeEach(() => {
     published: false,
     selectedMoveId: null,
     selectedResourceId: null,
+    selectedBlockId: null,
     pendingAdd: null,
   });
 });
@@ -1050,6 +1063,283 @@ describe('ui slice (panel chrome)', () => {
     expect(nextLeftRail('expanded')).toBe('slim');
     expect(nextLeftRail('slim')).toBe('hidden');
     expect(nextLeftRail('hidden')).toBe('expanded');
+  });
+});
+
+describe('selectBlock / selection mutual exclusivity', () => {
+  it('selectBlock sets the block selection and clears the resource selection', () => {
+    useVisSim.setState({ selectedResourceId: 'zone-1' });
+
+    useVisSim.getState().selectBlock('block-1');
+
+    const s = useVisSim.getState();
+    expect(s.selectedBlockId).toBe('block-1');
+    expect(s.selectedResourceId).toBeNull();
+    expect(s.revision).toBe(1);
+  });
+
+  it('selectResource clears the block selection', () => {
+    useVisSim.setState({ selectedBlockId: 'block-1' });
+
+    useVisSim.getState().selectResource('zone-1');
+
+    const s = useVisSim.getState();
+    expect(s.selectedResourceId).toBe('zone-1');
+    expect(s.selectedBlockId).toBeNull();
+  });
+
+  it('selectBlock(null) clears the block selection without touching the plan', () => {
+    useVisSim.getState().selectBlock('block-1');
+
+    useVisSim.getState().selectBlock(null);
+
+    const s = useVisSim.getState();
+    expect(s.selectedBlockId).toBeNull();
+    expect(s.revision).toBe(1);
+    expect(s.canUndo).toBe(false);
+  });
+
+  it('mode changes and newScene clear the block selection', () => {
+    useVisSim.setState({ mode: 'scene', selectedBlockId: 'block-1' });
+    useVisSim.getState().setMode('select');
+    expect(useVisSim.getState().selectedBlockId).toBeNull();
+
+    useVisSim.setState({ mode: 'scene', selectedBlockId: 'block-1' });
+    useVisSim.getState().newScene();
+    expect(useVisSim.getState().selectedBlockId).toBeNull();
+  });
+
+  it('setScene clears the block selection', () => {
+    useVisSim.setState({ selectedBlockId: 'block-1' });
+
+    useVisSim.getState().setScene('stadium-slice');
+
+    expect(useVisSim.getState().selectedBlockId).toBeNull();
+  });
+});
+
+describe('addBlockAt', () => {
+  it('creates a wall with defaults, selects it, and clears pendingAdd', () => {
+    useVisSim.setState({ mode: 'scene', pendingAdd: 'wall', selectedResourceId: 'zone-1' });
+
+    useVisSim.getState().addBlockAt('wall', { x: 2, z: 2, w: 4, d: 0.5 });
+
+    const s = useVisSim.getState();
+    expect(s.scene.blocks).toHaveLength(3);
+    const created = s.scene.blocks!.find((b) => b.id !== 'block-1' && b.id !== 'block-2');
+    expect(created).toBeDefined();
+    expect(created?.kind).toBe('wall');
+    expect(created?.height).toBe(3.5);
+    expect(created?.color).toBe('#8892aa');
+    expect(created?.rect).toEqual({ x: 2, z: 2, w: 4, d: 0.5 });
+    expect(s.selectedBlockId).toBe(created?.id);
+    expect(s.selectedResourceId).toBeNull();
+    expect(s.pendingAdd).toBeNull();
+    expect(s.revision).toBe(2);
+  });
+
+  it('creates a box with box defaults (height 2, box color)', () => {
+    useVisSim.getState().addBlockAt('box', { x: 14, z: 2, w: 2, d: 2 });
+
+    const created = useVisSim
+      .getState()
+      .scene.blocks!.find((b) => b.id !== 'block-1' && b.id !== 'block-2');
+    expect(created?.kind).toBe('box');
+    expect(created?.height).toBe(2);
+    expect(created?.color).toBe('#46506e');
+  });
+
+  it('generates unique ids across consecutive adds', () => {
+    useVisSim.getState().addBlockAt('wall', { x: 2, z: 2, w: 4, d: 0.5 });
+    useVisSim.getState().addBlockAt('wall', { x: 2, z: 4, w: 4, d: 0.5 });
+
+    const ids = useVisSim.getState().scene.blocks!.map((b) => b.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toHaveLength(4);
+  });
+
+  it('undo removes the added block again', () => {
+    useVisSim.getState().addBlockAt('box', { x: 14, z: 2, w: 2, d: 2 });
+    expect(useVisSim.getState().scene.blocks).toHaveLength(3);
+
+    useVisSim.getState().undo();
+
+    expect(useVisSim.getState().scene.blocks).toHaveLength(2);
+  });
+});
+
+describe('moveBlockBy / resizeBlockTo / updateBlockMeta', () => {
+  it('moveBlockBy translates the footprint and replaces the scene object', () => {
+    const before = useVisSim.getState().scene;
+
+    useVisSim.getState().moveBlockBy('block-1', 2, 1);
+
+    const s = useVisSim.getState();
+    expect(s.scene).not.toBe(before);
+    expect(s.scene.blocks!.find((b) => b.id === 'block-1')?.rect).toEqual({
+      x: 2,
+      z: 9,
+      w: 6,
+      d: 0.5,
+    });
+    // The original scene object is untouched (mutators return new scenes).
+    expect(before.blocks!.find((b) => b.id === 'block-1')?.rect).toEqual({
+      x: 0,
+      z: 8,
+      w: 6,
+      d: 0.5,
+    });
+  });
+
+  it('resizeBlockTo applies the new rect', () => {
+    useVisSim.getState().resizeBlockTo('block-2', { x: 10, z: 8, w: 3, d: 4 });
+
+    expect(useVisSim.getState().scene.blocks!.find((b) => b.id === 'block-2')?.rect).toEqual({
+      x: 10,
+      z: 8,
+      w: 3,
+      d: 4,
+    });
+  });
+
+  it('updateBlockMeta updates kind, height, elevation, and color', () => {
+    useVisSim
+      .getState()
+      .updateBlockMeta('block-2', { kind: 'slab', height: 0.5, y: 3, color: '#ffffff' });
+
+    const b = useVisSim.getState().scene.blocks!.find((x) => x.id === 'block-2');
+    expect(b?.kind).toBe('slab');
+    expect(b?.height).toBe(0.5);
+    expect(b?.y).toBe(3);
+    expect(b?.color).toBe('#ffffff');
+  });
+
+  it('undo restores the pre-edit blocks', () => {
+    useVisSim.getState().moveBlockBy('block-1', 2, 1);
+
+    useVisSim.getState().undo();
+
+    expect(useVisSim.getState().scene.blocks!.find((b) => b.id === 'block-1')?.rect).toEqual({
+      x: 0,
+      z: 8,
+      w: 6,
+      d: 0.5,
+    });
+  });
+});
+
+describe('removeBlock', () => {
+  it('removes the block and clears a matching selection', () => {
+    useVisSim.setState({ selectedBlockId: 'block-1' });
+
+    useVisSim.getState().removeBlock('block-1');
+
+    const s = useVisSim.getState();
+    expect(s.scene.blocks!.some((b) => b.id === 'block-1')).toBe(false);
+    expect(s.selectedBlockId).toBeNull();
+  });
+
+  it('leaves a non-matching selection alone', () => {
+    useVisSim.setState({ selectedBlockId: 'block-2' });
+
+    useVisSim.getState().removeBlock('block-1');
+
+    expect(useVisSim.getState().selectedBlockId).toBe('block-2');
+  });
+
+  it('undo restores the removed block', () => {
+    useVisSim.getState().removeBlock('block-1');
+    expect(useVisSim.getState().scene.blocks).toHaveLength(1);
+
+    useVisSim.getState().undo();
+
+    expect(useVisSim.getState().scene.blocks!.some((b) => b.id === 'block-1')).toBe(true);
+  });
+});
+
+describe('block edits invalidate approvals', () => {
+  const actions: Array<[string, () => void]> = [
+    ['addBlockAt', () => useVisSim.getState().addBlockAt('wall', { x: 2, z: 2, w: 4, d: 0.5 })],
+    ['moveBlockBy', () => useVisSim.getState().moveBlockBy('block-1', 1, 1)],
+    [
+      'resizeBlockTo',
+      () => useVisSim.getState().resizeBlockTo('block-1', { x: 0, z: 8, w: 8, d: 0.5 }),
+    ],
+    ['updateBlockMeta', () => useVisSim.getState().updateBlockMeta('block-1', { height: 4 })],
+    ['removeBlock', () => useVisSim.getState().removeBlock('block-1')],
+  ];
+
+  it.each(actions)('%s bumps revision, clears approvals/published, records history', (_n, act) => {
+    useVisSim.setState({ approvals: { 'team-b': 'approved' }, published: true });
+
+    act();
+
+    const s = useVisSim.getState();
+    expect(s.revision).toBe(2);
+    expect(s.approvals).toEqual({});
+    expect(s.published).toBe(false);
+    expect(s.canUndo).toBe(true);
+  });
+});
+
+describe('block edit actions swallow invalid ids', () => {
+  const invalidCalls: Array<[string, () => void]> = [
+    ['moveBlockBy', () => useVisSim.getState().moveBlockBy('nope', 1, 1)],
+    ['resizeBlockTo', () => useVisSim.getState().resizeBlockTo('nope', { x: 0, z: 0, w: 1, d: 1 })],
+    ['updateBlockMeta', () => useVisSim.getState().updateBlockMeta('nope', { height: 4 })],
+    ['removeBlock', () => useVisSim.getState().removeBlock('nope')],
+  ];
+
+  it.each(invalidCalls)('%s is a no-op that records no history', (_name, act) => {
+    const before = useVisSim.getState();
+
+    expect(act).not.toThrow();
+
+    const s = useVisSim.getState();
+    expect(s.scene).toBe(before.scene);
+    expect(s.revision).toBe(1);
+    expect(s.canUndo).toBe(false);
+    expect(s.approvals).toEqual({});
+    expect(s.published).toBe(false);
+  });
+});
+
+describe('setSceneRules', () => {
+  it('replaces the rules on a fresh scene object, bumps revision, and invalidates', () => {
+    useVisSim.setState({
+      scene: { ...makeScene(), rules: [makeRule('rule-old')] },
+      approvals: { 'team-b': 'approved' },
+      published: true,
+    });
+    const before = useVisSim.getState().scene;
+    const next = [makeRule('rule-a'), makeRule('rule-b')];
+
+    useVisSim.getState().setSceneRules(next);
+
+    const s = useVisSim.getState();
+    expect(s.scene).not.toBe(before);
+    expect(s.scene.rules).toEqual(next);
+    expect(before.rules).toEqual([makeRule('rule-old')]);
+    expect(s.revision).toBe(2);
+    expect(s.approvals).toEqual({});
+    expect(s.published).toBe(false);
+  });
+
+  it('can clear all rules with an empty list', () => {
+    useVisSim.setState({ scene: { ...makeScene(), rules: [makeRule('rule-old')] } });
+
+    useVisSim.getState().setSceneRules([]);
+
+    expect(useVisSim.getState().scene.rules).toEqual([]);
+  });
+
+  it('undo restores the previous rules', () => {
+    useVisSim.setState({ scene: { ...makeScene(), rules: [makeRule('rule-old')] } });
+
+    useVisSim.getState().setSceneRules([makeRule('rule-a')]);
+    useVisSim.getState().undo();
+
+    expect(useVisSim.getState().scene.rules).toEqual([makeRule('rule-old')]);
   });
 });
 

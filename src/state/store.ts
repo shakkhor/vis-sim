@@ -1,18 +1,35 @@
 import { create } from 'zustand';
-import type { ApprovalStatus, Move, Rect, Resource, SceneDef, Team, Vec2 } from '../domain/types';
+import type {
+  ApprovalStatus,
+  Block,
+  BlockKind,
+  Move,
+  Rect,
+  Resource,
+  Rule,
+  SceneDef,
+  Team,
+  Vec2,
+} from '../domain/types';
 import { SCENES, sceneEntryById } from '../domain/scenes';
 import {
+  addBlock as domainAddBlock,
   addResource as domainAddResource,
   addTeam as domainAddTeam,
   duplicateResource as domainDuplicateResource,
+  makeBlockId,
   makeResourceId,
+  moveBlock as domainMoveBlock,
   moveResource as domainMoveResource,
   moveWaypoint as domainMoveWaypoint,
+  removeBlock as domainRemoveBlock,
   removeResource as domainRemoveResource,
   removeTeam as domainRemoveTeam,
   renameScene as domainRenameScene,
+  resizeBlockTo as domainResizeBlockTo,
   resizeResource as domainResizeResource,
   snapRect,
+  updateBlockMeta as domainUpdateBlockMeta,
   updateResourceMeta as domainUpdateResourceMeta,
   updateTeam as domainUpdateTeam,
 } from '../domain/sceneEdit';
@@ -56,8 +73,10 @@ interface VisSimState {
   selectedMoveId: string | null;
   /** Scene-edit mode selection (PRD US-1); independent of selectedMoveId. */
   selectedResourceId: string | null;
-  /** Armed draw-resource tool in scene-edit mode (PRD US-5). */
-  pendingAdd: 'zone' | 'connector' | null;
+  /** Scene-edit block selection; mutually exclusive with selectedResourceId. */
+  selectedBlockId: string | null;
+  /** Armed draw tool in scene-edit mode (PRD US-5): resources or passive blocks. */
+  pendingAdd: 'zone' | 'connector' | 'wall' | 'box' | null;
   /** Mirrors of the module-level history stacks, for reactive UI (undo/redo buttons). */
   canUndo: boolean;
   canRedo: boolean;
@@ -84,7 +103,9 @@ interface VisSimState {
   publish: () => void;
 
   selectResource: (id: string | null) => void;
-  setPendingAdd: (kind: 'zone' | 'connector' | null) => void;
+  /** Selecting a block clears the resource selection (and vice versa). */
+  selectBlock: (id: string | null) => void;
+  setPendingAdd: (kind: 'zone' | 'connector' | 'wall' | 'box' | null) => void;
   moveResourceBy: (id: string, dx: number, dz: number) => void;
   resizeResourceTo: (id: string, rect: Rect) => void;
   updateResourceMeta: (
@@ -95,6 +116,19 @@ interface VisSimState {
   removeResource: (id: string) => void;
   moveMoveWaypoint: (moveId: string, index: number, p: Vec2) => void;
   duplicateSelectedResource: () => void;
+
+  /** Passive-block editing (visual context; blocks are never reservable). */
+  addBlockAt: (kind: 'wall' | 'box', rect: Rect) => void;
+  moveBlockBy: (id: string, dx: number, dz: number) => void;
+  resizeBlockTo: (id: string, rect: Rect) => void;
+  updateBlockMeta: (
+    id: string,
+    meta: { kind?: BlockKind; height?: number; y?: number; color?: string },
+  ) => void;
+  removeBlock: (id: string) => void;
+
+  /** Replace the scene's data-driven rules wholesale (rule editor). */
+  setSceneRules: (rules: Rule[]) => void;
 
   renameActiveScene: (name: string) => void;
   addTeamToScene: (team: Team) => void;
@@ -319,6 +353,7 @@ export const useVisSim = create<VisSimState>((set, get) => {
     revision: 1,
     selectedMoveId: null,
     selectedResourceId: null,
+    selectedBlockId: null,
     pendingAdd: null,
     canUndo: false,
     canRedo: false,
@@ -339,6 +374,7 @@ export const useVisSim = create<VisSimState>((set, get) => {
     published: false,
     selectedMoveId: null,
     selectedResourceId: null,
+    selectedBlockId: null,
     pendingAdd: null,
     canUndo: false,
     canRedo: false,
@@ -447,7 +483,7 @@ export const useVisSim = create<VisSimState>((set, get) => {
         draftPath: [],
         // Entering or leaving scene-edit mode drops scene-edit UI state (PRD US-12).
         ...(m === 'scene' || s.mode === 'scene'
-          ? { selectedResourceId: null, pendingAdd: null }
+          ? { selectedResourceId: null, selectedBlockId: null, pendingAdd: null }
           : {}),
       })),
     toggleMode: (m) => {
@@ -496,7 +532,10 @@ export const useVisSim = create<VisSimState>((set, get) => {
     approve: (teamId) => set((s) => ({ approvals: { ...s.approvals, [teamId]: 'approved' } })),
     publish: () => set({ published: true }),
 
-    selectResource: (id) => set({ selectedResourceId: id }),
+    // Resource and block selection are mutually exclusive: the inspector shows
+    // one or the other, so setting either always clears its counterpart.
+    selectResource: (id) => set({ selectedResourceId: id, selectedBlockId: null }),
+    selectBlock: (id) => set({ selectedBlockId: id, selectedResourceId: null }),
     setPendingAdd: (kind) => set({ pendingAdd: kind }),
 
     // Scene edits below delegate geometry/validation to src/domain/sceneEdit and
@@ -594,6 +633,91 @@ export const useVisSim = create<VisSimState>((set, get) => {
           return {};
         }
       }),
+
+    // Block edits mirror the resource-edit pattern: delegate to sceneEdit,
+    // bump revision + invalidate, and swallow domain throws (stale ids) as no-ops.
+    addBlockAt: (kind, rect) =>
+      mutate((s) => {
+        try {
+          const block: Block = {
+            id: makeBlockId(s.scene, kind),
+            kind,
+            rect: snapRect(rect),
+            height: kind === 'wall' ? 3.5 : 2,
+            color: kind === 'wall' ? '#8892aa' : '#46506e',
+          };
+          return {
+            scene: domainAddBlock(s.scene, block),
+            selectedBlockId: block.id,
+            selectedResourceId: null,
+            pendingAdd: null,
+            revision: s.revision + 1,
+            ...invalidate,
+          };
+        } catch {
+          return {};
+        }
+      }),
+
+    moveBlockBy: (id, dx, dz) =>
+      mutate((s) => {
+        try {
+          return {
+            scene: domainMoveBlock(s.scene, id, dx, dz),
+            revision: s.revision + 1,
+            ...invalidate,
+          };
+        } catch {
+          return {};
+        }
+      }),
+
+    resizeBlockTo: (id, rect) =>
+      mutate((s) => {
+        try {
+          return {
+            scene: domainResizeBlockTo(s.scene, id, rect),
+            revision: s.revision + 1,
+            ...invalidate,
+          };
+        } catch {
+          return {};
+        }
+      }),
+
+    updateBlockMeta: (id, meta) =>
+      mutate((s) => {
+        try {
+          return {
+            scene: domainUpdateBlockMeta(s.scene, id, meta),
+            revision: s.revision + 1,
+            ...invalidate,
+          };
+        } catch {
+          return {};
+        }
+      }),
+
+    removeBlock: (id) =>
+      mutate((s) => {
+        try {
+          return {
+            scene: domainRemoveBlock(s.scene, id),
+            selectedBlockId: s.selectedBlockId === id ? null : s.selectedBlockId,
+            revision: s.revision + 1,
+            ...invalidate,
+          };
+        } catch {
+          return {};
+        }
+      }),
+
+    setSceneRules: (rules) =>
+      mutate((s) => ({
+        scene: { ...s.scene, rules },
+        revision: s.revision + 1,
+        ...invalidate,
+      })),
 
     renameActiveScene: (name) =>
       mutate((s) => ({
