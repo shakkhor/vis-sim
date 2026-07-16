@@ -759,6 +759,173 @@ describe('resetSceneToDefault', () => {
   });
 });
 
+describe('renameActiveScene', () => {
+  it('renames the scene, bumps revision, and clears approvals/published', () => {
+    useVisSim.setState({ approvals: { 'team-b': 'approved' }, published: true });
+
+    useVisSim.getState().renameActiveScene('GMP floor 2');
+
+    const s = useVisSim.getState();
+    expect(s.scene.name).toBe('GMP floor 2');
+    expect(s.revision).toBe(2);
+    expect(s.approvals).toEqual({});
+    expect(s.published).toBe(false);
+    expect(s.canUndo).toBe(true);
+  });
+
+  it('undo restores the previous name', () => {
+    useVisSim.getState().renameActiveScene('GMP floor 2');
+
+    useVisSim.getState().undo();
+
+    expect(useVisSim.getState().scene.name).toBe('Test scene');
+  });
+});
+
+describe('team editing actions', () => {
+  const team = { id: 'team-c', name: 'Team C', color: '#aa3355' };
+
+  it('addTeamToScene appends the team, bumps revision, and invalidates approvals', () => {
+    useVisSim.setState({ approvals: { 'team-b': 'approved' }, published: true });
+
+    useVisSim.getState().addTeamToScene(team);
+
+    const s = useVisSim.getState();
+    expect(s.scene.teams.map((t) => t.id)).toEqual(['team-a', 'team-b', 'team-c']);
+    expect(s.revision).toBe(2);
+    expect(s.approvals).toEqual({});
+    expect(s.published).toBe(false);
+  });
+
+  it('addTeamToScene swallows duplicate ids as a no-op', () => {
+    const before = useVisSim.getState();
+
+    expect(() =>
+      useVisSim.getState().addTeamToScene({ id: 'team-a', name: 'Dup', color: '#000000' }),
+    ).not.toThrow();
+
+    const s = useVisSim.getState();
+    expect(s.scene).toBe(before.scene);
+    expect(s.revision).toBe(1);
+    expect(s.canUndo).toBe(false);
+  });
+
+  it('updateTeamInScene renames/recolors the team and bumps revision', () => {
+    useVisSim.getState().updateTeamInScene('team-b', { name: 'Partners', color: '#123456' });
+
+    const s = useVisSim.getState();
+    const t = s.scene.teams.find((x) => x.id === 'team-b');
+    expect(t?.name).toBe('Partners');
+    expect(t?.color).toBe('#123456');
+    expect(s.revision).toBe(2);
+  });
+
+  it('updateTeamInScene swallows unknown ids as a no-op', () => {
+    const before = useVisSim.getState();
+
+    useVisSim.getState().updateTeamInScene('nope', { name: 'X' });
+
+    const s = useVisSim.getState();
+    expect(s.scene).toBe(before.scene);
+    expect(s.revision).toBe(1);
+    expect(s.canUndo).toBe(false);
+  });
+
+  it('removeTeamFromScene removes a removable team and is undoable', () => {
+    useVisSim.getState().addTeamToScene(team);
+
+    useVisSim.getState().removeTeamFromScene('team-c');
+
+    const s = useVisSim.getState();
+    expect(s.scene.teams.some((t) => t.id === 'team-c')).toBe(false);
+    expect(s.revision).toBe(3);
+
+    useVisSim.getState().undo();
+    expect(useVisSim.getState().scene.teams.some((t) => t.id === 'team-c')).toBe(true);
+  });
+
+  it.each([
+    ['the authoring team', 'team-a'],
+    ['a sole resource owner', 'team-b'],
+    ['an executing team', 'team-a'],
+    ['an unknown id', 'nope'],
+  ])('removeTeamFromScene swallows %s as a no-op', (_why, id) => {
+    const before = useVisSim.getState();
+
+    expect(() => useVisSim.getState().removeTeamFromScene(id)).not.toThrow();
+
+    const s = useVisSim.getState();
+    expect(s.scene).toBe(before.scene);
+    expect(s.revision).toBe(1);
+    expect(s.canUndo).toBe(false);
+  });
+});
+
+describe('deleteCustomScene', () => {
+  const stubStorage = () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => void storage.set(key, value),
+      removeItem: (key: string) => void storage.delete(key),
+    });
+    return storage;
+  };
+
+  it('is a no-op for registry scene ids', () => {
+    const before = useVisSim.getState();
+
+    useVisSim.getState().deleteCustomScene(SCENES[0].scene.id);
+
+    expect(useVisSim.getState().scene).toBe(before.scene);
+  });
+
+  it('switches to the default scene when the active custom scene is deleted', () => {
+    expect(sceneEntryById('test-scene')).toBeUndefined();
+
+    useVisSim.getState().deleteCustomScene('test-scene');
+
+    expect(useVisSim.getState().scene.id).toBe(SCENES[0].scene.id);
+  });
+
+  it('removes the persisted entry and custom-scenes index row', () => {
+    const storage = stubStorage();
+    try {
+      // Persist the active custom scene via a plan edit.
+      useVisSim.getState().moveResourceBy('zone-1', 1, 1);
+      expect(storage.has('vissim:scene:test-scene')).toBe(true);
+      expect(listPersistedCustomScenes()).toEqual([{ id: 'test-scene', name: 'Test scene' }]);
+
+      useVisSim.getState().deleteCustomScene('test-scene');
+
+      expect(storage.has('vissim:scene:test-scene')).toBe(false);
+      expect(listPersistedCustomScenes()).toEqual([]);
+      expect(useVisSim.getState().scene.id).toBe(SCENES[0].scene.id);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('leaves the active scene alone when deleting a different custom scene', () => {
+    const storage = stubStorage();
+    try {
+      storage.set(
+        'vissim:scene:other-custom',
+        JSON.stringify({ scene: { ...makeScene(), id: 'other-custom' }, moves: [], planName: 'x' }),
+      );
+      storage.set('vissim:custom-scenes', JSON.stringify([{ id: 'other-custom', name: 'Other' }]));
+
+      useVisSim.getState().deleteCustomScene('other-custom');
+
+      expect(useVisSim.getState().scene.id).toBe('test-scene');
+      expect(storage.has('vissim:scene:other-custom')).toBe(false);
+      expect(listPersistedCustomScenes()).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('persistence is safe without localStorage (node env)', () => {
   it('listPersistedCustomScenes returns an empty list', () => {
     expect(listPersistedCustomScenes()).toEqual([]);

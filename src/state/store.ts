@@ -1,16 +1,20 @@
 import { create } from 'zustand';
-import type { ApprovalStatus, Move, Rect, Resource, SceneDef, Vec2 } from '../domain/types';
+import type { ApprovalStatus, Move, Rect, Resource, SceneDef, Team, Vec2 } from '../domain/types';
 import { SCENES, sceneEntryById } from '../domain/scenes';
 import {
   addResource as domainAddResource,
+  addTeam as domainAddTeam,
   duplicateResource as domainDuplicateResource,
   makeResourceId,
   moveResource as domainMoveResource,
   moveWaypoint as domainMoveWaypoint,
   removeResource as domainRemoveResource,
+  removeTeam as domainRemoveTeam,
+  renameScene as domainRenameScene,
   resizeResource as domainResizeResource,
   snapRect,
   updateResourceMeta as domainUpdateResourceMeta,
+  updateTeam as domainUpdateTeam,
 } from '../domain/sceneEdit';
 
 export type Mode = 'select' | 'draw' | 'scene';
@@ -92,10 +96,17 @@ interface VisSimState {
   moveMoveWaypoint: (moveId: string, index: number, p: Vec2) => void;
   duplicateSelectedResource: () => void;
 
+  renameActiveScene: (name: string) => void;
+  addTeamToScene: (team: Team) => void;
+  updateTeamInScene: (id: string, meta: { name?: string; color?: string }) => void;
+  removeTeamFromScene: (id: string) => void;
+
   undo: () => void;
   redo: () => void;
   newScene: () => void;
   resetSceneToDefault: () => void;
+  /** Drop a non-registry scene's persisted data; switches away if it is active. */
+  deleteCustomScene: (id: string) => void;
 }
 
 /** Every plan edit invalidates approvals — approvals attach to a revision. */
@@ -396,6 +407,15 @@ export const useVisSim = create<VisSimState>((set, get) => {
       persistPlan(get());
     },
 
+    deleteCustomScene: (id) => {
+      // Registry scenes can be reset but never deleted.
+      if (sceneEntryById(id)) return;
+      removePersistedPlan(id);
+      if (get().scene.id === id) {
+        get().setScene(SCENES[0].scene.id);
+      }
+    },
+
     undo: () => {
       const snap = past.pop();
       if (!snap) return;
@@ -567,6 +587,52 @@ export const useVisSim = create<VisSimState>((set, get) => {
           return {
             scene,
             selectedResourceId: copy.id,
+            revision: s.revision + 1,
+            ...invalidate,
+          };
+        } catch {
+          return {};
+        }
+      }),
+
+    renameActiveScene: (name) =>
+      mutate((s) => ({
+        scene: domainRenameScene(s.scene, name),
+        revision: s.revision + 1,
+        ...invalidate,
+      })),
+
+    addTeamToScene: (team) =>
+      mutate((s) => {
+        try {
+          return {
+            scene: domainAddTeam(s.scene, team),
+            revision: s.revision + 1,
+            ...invalidate,
+          };
+        } catch {
+          return {};
+        }
+      }),
+
+    updateTeamInScene: (id, meta) =>
+      mutate((s) => {
+        try {
+          return {
+            scene: domainUpdateTeam(s.scene, id, meta),
+            revision: s.revision + 1,
+            ...invalidate,
+          };
+        } catch {
+          return {};
+        }
+      }),
+
+    removeTeamFromScene: (id) =>
+      mutate((s) => {
+        try {
+          return {
+            scene: domainRemoveTeam(s.scene, id, s.moves),
             revision: s.revision + 1,
             ...invalidate,
           };
