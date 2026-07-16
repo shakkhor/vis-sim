@@ -4,7 +4,7 @@
 // in WeakMaps keyed off SceneDef object identity, so an edited scene MUST be a
 // fresh object (with fresh nested objects for anything that changed) to get
 // fresh lookups instead of stale cached ones.
-import type { Move, Rect, Resource, ResourceKind, SceneDef, Vec2 } from './types';
+import type { Move, Rect, Resource, ResourceKind, SceneDef, Team, Vec2 } from './types';
 
 /** Ground-plane grid step: all edited geometry snaps to this (PRD §2.8). */
 export const GRID = 0.5;
@@ -107,6 +107,76 @@ export function updateResourceMeta(
     ...(meta.ownerTeamIds !== undefined ? { ownerTeamIds: [...meta.ownerTeamIds] } : {}),
     ...(meta.tags !== undefined ? { tags: [...meta.tags] } : {}),
   }));
+}
+
+/** New scene with `name` replaced. Never mutates. */
+export function renameScene(scene: SceneDef, name: string): SceneDef {
+  return { ...scene, name };
+}
+
+/** Add a team. Throws naming a duplicate team id. */
+export function addTeam(scene: SceneDef, team: Team): SceneDef {
+  if (scene.teams.some((t) => t.id === team.id)) {
+    throw new Error(`Duplicate team id: ${team.id}`);
+  }
+  return { ...scene, teams: [...scene.teams, { ...team }] };
+}
+
+/** Update a team's name / color. Throws naming an unknown team id. */
+export function updateTeam(
+  scene: SceneDef,
+  teamId: string,
+  meta: { name?: string; color?: string },
+): SceneDef {
+  if (!scene.teams.some((t) => t.id === teamId)) {
+    throw new Error(`Unknown team id: ${teamId}`);
+  }
+  return {
+    ...scene,
+    teams: scene.teams.map((t) =>
+      t.id === teamId
+        ? {
+            ...t,
+            ...(meta.name !== undefined ? { name: meta.name } : {}),
+            ...(meta.color !== undefined ? { color: meta.color } : {}),
+          }
+        : t,
+    ),
+  };
+}
+
+/**
+ * Remove a team. Throws if the id is unknown, the team authors the scene, is
+ * the sole owner of any resource, or executes any move in `moves` (the current
+ * plan). Co-ownerships are stripped from the surviving resources — sole
+ * ownership throws first, so no resource is ever left ownerless.
+ */
+export function removeTeam(scene: SceneDef, teamId: string, moves: Move[]): SceneDef {
+  if (!scene.teams.some((t) => t.id === teamId)) {
+    throw new Error(`Unknown team id: ${teamId}`);
+  }
+  if (teamId === scene.authorTeamId) {
+    throw new Error(`Cannot remove the authoring team: ${teamId}`);
+  }
+  const solelyOwned = scene.resources.find(
+    (r) => r.ownerTeamIds.length === 1 && r.ownerTeamIds[0] === teamId,
+  );
+  if (solelyOwned) {
+    throw new Error(`Team ${teamId} is the sole owner of resource ${solelyOwned.id}`);
+  }
+  const executed = moves.find((m) => m.teamId === teamId);
+  if (executed) {
+    throw new Error(`Team ${teamId} executes move ${executed.id}`);
+  }
+  return {
+    ...scene,
+    teams: scene.teams.filter((t) => t.id !== teamId),
+    resources: scene.resources.map((r) =>
+      r.ownerTeamIds.includes(teamId)
+        ? { ...r, ownerTeamIds: r.ownerTeamIds.filter((id) => id !== teamId) }
+        : r,
+    ),
+  };
 }
 
 /** New Move with waypoint `index` replaced by `p` snapped to the grid (US-9). */

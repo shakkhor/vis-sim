@@ -3,16 +3,20 @@ import { resourceById, teamById } from './scene';
 import {
   GRID,
   addResource,
+  addTeam,
   duplicateResource,
   makeResourceId,
   moveResource,
   moveWaypoint,
   removeResource,
+  removeTeam,
+  renameScene,
   resizeResource,
   snap,
   snapRect,
   snapRectToNeighbors,
   updateResourceMeta,
+  updateTeam,
 } from './sceneEdit';
 import type { Move, Rect, Resource, SceneDef } from './types';
 
@@ -376,6 +380,105 @@ describe('snapRectToNeighbors', () => {
     snapRectToNeighbors(resources, null, input);
     expect(input).toEqual({ x: 4.3, z: 3.7, w: 2, d: 2 });
     expect(resources).toEqual(snapshot);
+  });
+});
+
+describe('renameScene', () => {
+  it('replaces the name and nothing else', () => {
+    const next = expectImmutable((s) => renameScene(s, 'Renamed scene'));
+    expect(next.name).toBe('Renamed scene');
+    expect(next.id).toBe('test-scene');
+    expect(next.teams).toEqual(makeScene().teams);
+    expect(next.resources).toEqual(makeScene().resources);
+  });
+});
+
+describe('addTeam', () => {
+  it('appends the team', () => {
+    const next = expectImmutable((s) =>
+      addTeam(s, { id: 'team-med', name: 'Medical', color: '#22aa55' }),
+    );
+    expect(next.teams).toHaveLength(3);
+    expect(teamById(next, 'team-med')?.name).toBe('Medical');
+  });
+
+  it('copies the passed-in team instead of sharing it', () => {
+    const team = { id: 'team-med', name: 'Medical', color: '#22aa55' };
+    const next = addTeam(makeScene(), team);
+    expect(teamById(next, 'team-med')).toEqual(team);
+    expect(teamById(next, 'team-med')).not.toBe(team);
+  });
+
+  it('throws naming a duplicate team id', () => {
+    expect(() => addTeam(makeScene(), { id: 'team-ops', name: 'X', color: '#000000' })).toThrow(
+      /team-ops/,
+    );
+  });
+});
+
+describe('updateTeam', () => {
+  it('applies name and color', () => {
+    const next = expectImmutable((s) =>
+      updateTeam(s, 'team-sec', { name: 'Safety', color: '#111111' }),
+    );
+    const t = teamById(next, 'team-sec');
+    expect(t?.name).toBe('Safety');
+    expect(t?.color).toBe('#111111');
+  });
+
+  it('leaves omitted fields unchanged', () => {
+    const next = updateTeam(makeScene(), 'team-sec', { color: '#101010' });
+    const t = teamById(next, 'team-sec');
+    expect(t?.name).toBe('Security');
+    expect(t?.color).toBe('#101010');
+  });
+
+  it('leaves untouched teams reference-equal (structural sharing)', () => {
+    const scene = makeScene();
+    const next = updateTeam(scene, 'team-sec', { name: 'Safety' });
+    expect(teamById(next, 'team-ops')).toBe(teamById(scene, 'team-ops'));
+  });
+
+  it('throws naming an unknown team id', () => {
+    expect(() => updateTeam(makeScene(), 'team-ghost', { name: 'X' })).toThrow(/team-ghost/);
+  });
+});
+
+describe('removeTeam', () => {
+  /** makeScene plus a removable third team co-owning connector-1. */
+  function sceneWithThirdTeam(): SceneDef {
+    const withTeam = addTeam(makeScene(), { id: 'team-med', name: 'Medical', color: '#22aa55' });
+    return updateResourceMeta(withTeam, 'connector-1', {
+      ownerTeamIds: ['team-sec', 'team-med'],
+    });
+  }
+
+  it('removes the team and strips its co-ownerships without mutating the input', () => {
+    const scene = sceneWithThirdTeam();
+    const snapshot = structuredClone(scene);
+    const next = removeTeam(scene, 'team-med', []);
+    expect(scene).toEqual(snapshot);
+    expect(next).not.toBe(scene);
+    expect(next.teams.map((t) => t.id)).toEqual(['team-ops', 'team-sec']);
+    expect(resourceById(next, 'connector-1')?.ownerTeamIds).toEqual(['team-sec']);
+  });
+
+  it('throws for the authoring team', () => {
+    expect(() => removeTeam(makeScene(), 'team-ops', [])).toThrow(/authoring/);
+  });
+
+  it('throws when the team is the sole owner of a resource, naming it', () => {
+    expect(() => removeTeam(makeScene(), 'team-sec', [])).toThrow(/connector-1/);
+  });
+
+  it('throws when the team executes a move, naming it', () => {
+    const scene = sceneWithThirdTeam();
+    const move: Move = { ...makeMove(), teamId: 'team-med' };
+    expect(() => removeTeam(scene, 'team-med', [move])).toThrow(/move-1/);
+  });
+
+  it('throws naming an unknown team id', () => {
+    expect(() => removeTeam(makeScene(), 'team-ghost', [])).toThrow(/team-ghost/);
   });
 });
 
