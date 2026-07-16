@@ -18,7 +18,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * - V / M / E: tools — select / draw move / edit scene (M and E toggle back to select)
  * - 1 / 2 / 3: view mode 3d / top / iso
  * - [ : cycle left tool rail (expanded → slim → hidden); ] : right panel; \ : bottom panel
- * - Delete / Backspace: delete selected move
+ * - Delete / Backspace: delete selected resource (scene mode) or selected move
  * - Ctrl/Cmd+Z: undo; Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y: redo
  * - Ctrl/Cmd+D (scene mode): duplicate selected resource
  */
@@ -106,7 +106,11 @@ export function useShortcuts(): void {
           break;
         case 'Delete':
         case 'Backspace':
-          if (state.selectedMoveId) {
+          // PRD US-6: in scene mode a selected resource takes precedence over a
+          // selected move — deleting the thing the user is looking at.
+          if (state.mode === 'scene' && state.selectedResourceId) {
+            state.removeResource(state.selectedResourceId);
+          } else if (state.selectedMoveId) {
             state.deleteMove(state.selectedMoveId);
           }
           break;
