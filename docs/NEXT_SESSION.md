@@ -36,14 +36,18 @@ Known deviation (accepted): Delete/Backspace shortcut deletes without the inline
 confirm dialog (undoable via Ctrl+Z, so low risk; PRD US-6 wanted a confirm —
 revisit if a design partner trips on it).
 
+## State update (wave 9): 311 tests green. Shipped per-reviewer scoped playback —
+eye icon on approver/author rows focuses that team: camera frames their zones,
+their reservations highlight with a team-color ring, everything else dims;
+Esc exits (outermost escape layer); "Viewing as <team>" banner in the panel.
+
 ## Backlog, in priority order
 
 1. Design-partner feedback pass — user is showing the app to an ops person; their
    feedback reorders everything below.
-2. Per-reviewer scoped playback (approver sees their zones framed).
-3. Auto-wall generation around a zone (one click walls a room).
-4. Custom scene: connector capacity fields + capacity rule kind.
-5. Multi-user backend (Phase 1→2 boundary — architecture decision, not a wave).
+2. Auto-wall generation around a zone (one click walls a room).
+3. Custom scene: connector capacity fields + capacity rule kind.
+4. Multi-user backend (Phase 1→2 boundary — architecture decision, not a wave).
 
 ## Known constraints
 
