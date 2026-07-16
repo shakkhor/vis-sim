@@ -96,10 +96,28 @@ export interface SeparationRule {
 }
 
 /**
+ * Movement through resources carrying any of `resourceTags` must flow in
+ * `direction`: a reservation whose net travel across the resource runs against
+ * it violates the rule. One-way GMP corridors and airlocks (pharma) — flow
+ * direction comes straight off the personnel/material-flow drawings.
+ * Perpendicular crossings, net-zero travel and stationary occupancy are fine;
+ * only dominant-axis travel against the arrow is flagged.
+ */
+export interface UnidirectionalRule {
+  id: string;
+  description: string;
+  kind: 'unidirectional';
+  /** Tags of resources that are one-way. */
+  resourceTags: string[];
+  /** Allowed travel direction through tagged resources. */
+  direction: '+x' | '-x' | '+z' | '-z';
+}
+
+/**
  * The rule vocabulary. Extend by adding new discriminated-union members here
  * (e.g. `CapacityRule`) and handling them in `evaluateRules`.
  */
-export type Rule = ForbiddenEntryRule | SeparationRule;
+export type Rule = ForbiddenEntryRule | SeparationRule | UnidirectionalRule;
 
 /** A rule broken by a specific reservation. Conceptually always blocking. */
 export interface RuleViolation {

@@ -182,6 +182,40 @@ describe('shipped plan — the deliberate demo violation', () => {
     expect(shadow?.blocking).toBe(false);
   });
 
+  it('walks corridor-2 with the one-way flow — the changeover contributes no violation', () => {
+    // Shipped changeover: enters corridor-2 at (-9,20), exits north at (36,24) —
+    // net travel +45x/+4z, dominant +x, matching the east-only rule. The single
+    // shipped violation (asserted above) is the separation breach, so the
+    // unidirectional rule stays silent on the shipped plan.
+    expect(violations.filter((v) => v.ruleId === 'pharma-oneway-corridor2')).toEqual([]);
+  });
+
+  it('flags exactly one unidirectional violation when the changeover walk is reversed', () => {
+    const reversed = PHARMA_MOVES.map((m) =>
+      m.id === 'packagingChangeover' ? { ...m, path: [...m.path].reverse() } : m,
+    );
+    const reversedReservations = allReservations(reversed, PHARMA_SCENE.resources);
+    const reversedViolations = evaluateRules(
+      PHARMA_SCENE.rules ?? [],
+      reversedReservations,
+      reversed,
+      PHARMA_SCENE.resources,
+    );
+    const oneWay = reversedViolations.filter((v) => v.ruleId === 'pharma-oneway-corridor2');
+    expect(oneWay).toHaveLength(1);
+    expect(oneWay[0].moveId).toBe('packagingChangeover');
+    expect(oneWay[0].resourceId).toBe('corridor2');
+    // Reversed walk: packaging → (36,24) into corridor-2 at arc 11 of 60 (09:31),
+    // west along the spine until the move ends at (-9,20) at 10:20.
+    expect(oneWay[0].t0).toBeCloseTo(571, 6);
+    expect(oneWay[0].t1).toBeCloseTo(620, 6);
+    // The reversal changes nothing else: the separation breach still stands alone.
+    expect(reversedViolations).toHaveLength(2);
+    expect(
+      reversedViolations.filter((v) => v.ruleId === 'pharma-waste-material-segregation'),
+    ).toHaveLength(1);
+  });
+
   it('clears all violations when waste egress is retimed 30 minutes later', () => {
     const retimed = PHARMA_MOVES.map((m) =>
       m.id === 'wasteEgress' ? { ...m, tStart: m.tStart + 30, tEnd: m.tEnd + 30 } : m,

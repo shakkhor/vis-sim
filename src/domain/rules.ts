@@ -3,6 +3,7 @@
 // kinds are added as new members of the `Rule` discriminated union plus one
 // evaluator branch below — no changes to callers required.
 
+import { pathLength, pointAlong } from './engine';
 import type {
   ForbiddenEntryRule,
   Move,
@@ -11,11 +12,18 @@ import type {
   Rule,
   RuleViolation,
   SeparationRule,
+  UnidirectionalRule,
 } from './types';
 
 // Rule types live in types.ts (the single home for domain types); re-exported
 // here so rule consumers can keep importing them alongside `evaluateRules`.
-export type { ForbiddenEntryRule, Rule, RuleViolation, SeparationRule } from './types';
+export type {
+  ForbiddenEntryRule,
+  Rule,
+  RuleViolation,
+  SeparationRule,
+  UnidirectionalRule,
+} from './types';
 
 function tagsIntersect(resource: Resource, tags: string[]): boolean {
   return (resource.tags ?? []).some((t) => tags.includes(t));
@@ -93,6 +101,47 @@ function evaluateSeparation(
   return violations;
 }
 
+function evaluateUnidirectional(
+  rule: UnidirectionalRule,
+  reservations: Reservation[],
+  moveById: Map<string, Move>,
+  resourceById: Map<string, Resource>,
+): RuleViolation[] {
+  const violations: RuleViolation[] = [];
+  for (const reservation of reservations) {
+    const move = moveById.get(reservation.moveId);
+    const resource = resourceById.get(reservation.resourceId);
+    if (!move || !resource) continue;
+    if (!tagsIntersect(resource, rule.resourceTags)) continue;
+    const dur = move.tEnd - move.tStart;
+    const total = pathLength(move.path);
+    if (dur <= 0 || total === 0) continue; // stationary occupancy: no direction of travel
+    // Reservations map arc-length fractions onto the move window (engine.ts,
+    // constant speed), so t0/t1 convert back to fractions — and thence to the
+    // entry/exit points of this crossing of the resource.
+    const entry = pointAlong(move.path, ((reservation.t0 - move.tStart) / dur) * total);
+    const exit = pointAlong(move.path, ((reservation.t1 - move.tStart) / dur) * total);
+    const dx = exit.x - entry.x;
+    const dz = exit.z - entry.z;
+    const alongX = rule.direction === '+x' || rule.direction === '-x';
+    const axisDelta = alongX ? dx : dz;
+    const crossDelta = alongX ? dz : dx;
+    // Net-zero travel (in and back out the same side) or a crossing whose
+    // dominant axis is perpendicular to the arrow is not directional flow.
+    if (Math.abs(axisDelta) <= Math.abs(crossDelta)) continue;
+    const allowedSign = rule.direction === '+x' || rule.direction === '+z' ? 1 : -1;
+    if (axisDelta * allowedSign > 0) continue; // travelling with the arrow
+    violations.push({
+      ruleId: rule.id,
+      moveId: move.id,
+      resourceId: resource.id,
+      t0: reservation.t0,
+      t1: reservation.t1,
+    });
+  }
+  return violations;
+}
+
 /**
  * Check every reservation against every rule. Reservations stay derived-from-moves
  * (engine.ts); this layer only judges them. Violations are conceptually blocking —
@@ -115,6 +164,10 @@ export function evaluateRules(
       }
       case 'separation': {
         violations.push(...evaluateSeparation(rule, reservations, moveById, resourceById));
+        break;
+      }
+      case 'unidirectional': {
+        violations.push(...evaluateUnidirectional(rule, reservations, moveById, resourceById));
         break;
       }
       default: {

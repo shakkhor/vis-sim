@@ -232,6 +232,115 @@ describe('evaluateRules — separation', () => {
   });
 });
 
+const oneWayEast: Rule = {
+  id: 'corridor-one-way-east',
+  description: 'Corridor flows east (+x) only',
+  kind: 'unidirectional',
+  resourceTags: ['one-way'],
+  direction: '+x',
+};
+
+describe('evaluateRules — unidirectional', () => {
+  // 10×10 corridor at x 0..10; moves below run 1 unit/min so windows are exact.
+  const corridor = makeResource({ id: 'oneway-corridor', tags: ['one-way'] });
+
+  /** Derive reservations from the move so t0/t1 ↔ path-fraction mapping is the engine's own. */
+  const check = (move: Move, resources: Resource[] = [corridor]) =>
+    evaluateRules([oneWayEast], allReservations([move], resources), [move], resources);
+
+  it('passes a move travelling in the allowed direction', () => {
+    const eastbound = makeMove({
+      path: [
+        { x: -5, z: 5 },
+        { x: 15, z: 5 },
+      ],
+      tStart: 720,
+      tEnd: 740,
+    });
+    expect(check(eastbound)).toEqual([]);
+  });
+
+  it('flags a move travelling against the direction, with the reservation window', () => {
+    const westbound = makeMove({
+      id: 'westbound',
+      path: [
+        { x: 15, z: 5 },
+        { x: -5, z: 5 },
+      ],
+      tStart: 720,
+      tEnd: 740, // inside corridor x 0..10 → arc 5..15 of 20 → 725–735
+    });
+    expect(check(westbound)).toEqual([
+      {
+        ruleId: 'corridor-one-way-east',
+        moveId: 'westbound',
+        resourceId: 'oneway-corridor',
+        t0: 725,
+        t1: 735,
+      },
+    ]);
+  });
+
+  it('passes a perpendicular crossing (dominant axis off the rule axis)', () => {
+    const northbound = makeMove({
+      path: [
+        { x: 5, z: -5 },
+        { x: 5, z: 15 },
+      ],
+      tStart: 720,
+      tEnd: 740,
+    });
+    expect(check(northbound)).toEqual([]);
+  });
+
+  it('passes net-zero travel that turns around inside the resource', () => {
+    const inAndBack = makeMove({
+      path: [
+        { x: -5, z: 5 },
+        { x: 8, z: 5 },
+        { x: -5, z: 5 }, // one merged reservation, entry (0,5) = exit (0,5)
+      ],
+      tStart: 720,
+      tEnd: 746,
+    });
+    expect(check(inAndBack)).toEqual([]);
+  });
+
+  it('judges each crossing of a multi-crossing path independently', () => {
+    const thereAndBack = makeMove({
+      id: 'there-and-back',
+      path: [
+        { x: -5, z: 3 },
+        { x: 15, z: 3 }, // eastbound crossing: arc 5..15 → 725–735, complies
+        { x: 15, z: 7 }, // outside the corridor (x > 10)
+        { x: -5, z: 7 }, // westbound crossing: arc 29..39 → 749–759, violates
+      ],
+      tStart: 720,
+      tEnd: 764, // total arc length 44 at 1 unit/min
+    });
+    const violations = check(thereAndBack);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].ruleId).toBe('corridor-one-way-east');
+    expect(violations[0].moveId).toBe('there-and-back');
+    expect(violations[0].resourceId).toBe('oneway-corridor');
+    expect(violations[0].t0).toBeCloseTo(749, 6);
+    expect(violations[0].t1).toBeCloseTo(759, 6);
+  });
+
+  it('ignores resources without the rule tags', () => {
+    const untagged = makeResource({ id: 'plain-zone', tags: ['clean'] });
+    const westbound = makeMove({
+      path: [
+        { x: 15, z: 5 },
+        { x: -5, z: 5 },
+      ],
+      tStart: 720,
+      tEnd: 740,
+    });
+    expect(check(westbound, [untagged])).toEqual([]);
+  });
+});
+
 describe('evaluateRules — rule sets', () => {
   it('returns nothing for an empty rule set', () => {
     const resources = [makeResource({ tags: ['clean', 'secure'] })];

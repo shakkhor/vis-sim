@@ -44,7 +44,7 @@ export const PHARMA_SCENE: SceneDef = {
       kind: 'zone',
       rect: { x: -50, z: 16, w: 100, d: 8 },
       ownerTeamIds: ['production', 'qa'],
-      tags: ['clean', 'grade-d'],
+      tags: ['clean', 'grade-d', 'one-way-east'],
     },
     {
       id: 'pal1',
@@ -200,6 +200,16 @@ export const PHARMA_SCENE: SceneDef = {
       teamIdsA: ['waste'],
       teamIdsB: ['materials'],
       resourceTags: ['clean', 'airlock'],
+    },
+    {
+      // One-way arrow from the reference drawing's flow legend: the north spine
+      // feeds packaging/interim store west→east only. The shipped changeover walk
+      // ((-9,20)→(36,20)→exit north at z 24: net +x) complies.
+      id: 'pharma-oneway-corridor2',
+      kind: 'unidirectional',
+      resourceTags: ['one-way-east'],
+      direction: '+x',
+      description: 'Corridor-2 flows east only (unidirectional clean corridor)',
     },
   ],
 };

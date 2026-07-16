@@ -40,7 +40,8 @@ export class SerializationError extends Error {
 
 const ACTOR_KINDS: readonly ActorKind[] = ['cohort', 'staff', 'vehicle', 'material'];
 const RESOURCE_KINDS: readonly ResourceKind[] = ['zone', 'connector'];
-const RULE_KINDS = ['forbidden-entry', 'separation'] as const;
+const RULE_KINDS = ['forbidden-entry', 'separation', 'unidirectional'] as const;
+const RULE_DIRECTIONS = ['+x', '-x', '+z', '-z'] as const;
 const BLOCK_KINDS: readonly BlockKind[] = ['wall', 'pillar', 'box', 'slab'];
 
 export function serializePlan(doc: PlanDocument): string {
@@ -143,6 +144,13 @@ function parseRule(value: unknown, path: string): Rule {
       actorKinds: asArray(rule.actorKinds, `${path}.actorKinds`).map((actorKind, i) =>
         asOneOf(actorKind, ACTOR_KINDS, `${path}.actorKinds[${i}]`),
       ),
+    };
+  }
+  if (kind === 'unidirectional') {
+    return {
+      ...base,
+      kind,
+      direction: asOneOf(rule.direction, RULE_DIRECTIONS, `${path}.direction`),
     };
   }
   return {
