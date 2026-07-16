@@ -1,16 +1,21 @@
 import { useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { useVisSim } from '../state/store';
 import { resourceById, teamById } from '../domain/scene';
 import { fmtTime } from '../domain/engine';
 import { generateBriefingHtml } from '../export/briefing';
 import { SCENES } from '../domain/scenes';
+import ConfirmDialog from './ConfirmDialog';
 import type {
   ActorKind,
+  BlockKind,
   Conflict,
   Move,
   Reservation,
+  Rule,
   RuleViolation,
   SceneDef,
+  UnidirectionalRule,
 } from '../domain/types';
 
 interface Props {
@@ -23,6 +28,11 @@ interface Props {
 function parseTime(s: string): number {
   const [h, m] = s.split(':').map(Number);
   return (h || 0) * 60 + (m || 0);
+}
+
+/** Shared commit-on-Enter behavior for commit-on-blur inputs. */
+function blurOnEnter(e: KeyboardEvent<HTMLInputElement>): void {
+  if (e.key === 'Enter') e.currentTarget.blur();
 }
 
 function DraftForm() {
@@ -138,6 +148,7 @@ function SceneCard() {
   const deleteCustomScene = useVisSim((s) => s.deleteCustomScene);
   const [newTeamName, setNewTeamName] = useState('');
   const [newTeamColor, setNewTeamColor] = useState('#4f8ef7');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const isCustom = !SCENES.some((entry) => entry.scene.id === scene.id);
 
@@ -229,17 +240,205 @@ function SceneCard() {
       </div>
       {isCustom && (
         <div className="row">
-          <button
-            className="danger"
-            onClick={() => {
-              const message = `Delete scene "${scene.name}" and its plan? This cannot be undone.`;
-              if (window.confirm(message)) deleteCustomScene(scene.id);
-            }}
-          >
+          <button className="danger" onClick={() => setConfirmingDelete(true)}>
             Delete scene
           </button>
         </div>
       )}
+      <ConfirmDialog
+        open={confirmingDelete}
+        title="Delete scene"
+        body={`Delete scene "${scene.name}" and its plan? This cannot be undone.`}
+        confirmLabel="Delete scene"
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          deleteCustomScene(scene.id);
+        }}
+        onCancel={() => setConfirmingDelete(false)}
+      />
+    </div>
+  );
+}
+
+/** Next unused `rule-${n}` id (existing scenes may already use this scheme). */
+function nextRuleId(rules: Rule[]): string {
+  let n = rules.length + 1;
+  while (rules.some((r) => r.id === `rule-${n}`)) n++;
+  return `rule-${n}`;
+}
+
+const ACTOR_KIND_OPTIONS: { value: ActorKind; label: string }[] = [
+  { value: 'cohort', label: 'Spectator cohort' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'vehicle', label: 'Vehicle' },
+  { value: 'material', label: 'Material' },
+];
+
+const DIRECTION_OPTIONS: { value: UnidirectionalRule['direction']; label: string }[] = [
+  { value: '+x', label: '+x (east)' },
+  { value: '-x', label: '-x (west)' },
+  { value: '+z', label: '+z (south)' },
+  { value: '-z', label: '-z (north)' },
+];
+
+function RulesCard() {
+  const scene = useVisSim((s) => s.scene);
+  const setSceneRules = useVisSim((s) => s.setSceneRules);
+  const rules = scene.rules ?? [];
+
+  const [kind, setKind] = useState<Rule['kind']>('forbidden-entry');
+  const [description, setDescription] = useState('');
+  const [tagsRaw, setTagsRaw] = useState('');
+  const [actorKinds, setActorKinds] = useState<ActorKind[]>([]);
+  const [teamIdsA, setTeamIdsA] = useState<string[]>([]);
+  const [teamIdsB, setTeamIdsB] = useState<string[]>([]);
+  const [direction, setDirection] = useState<UnidirectionalRule['direction']>('+x');
+
+  const resourceTags = tagsRaw
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const valid =
+    description.trim().length > 0 &&
+    resourceTags.length > 0 &&
+    (kind === 'forbidden-entry'
+      ? actorKinds.length > 0
+      : kind === 'separation'
+        ? teamIdsA.length > 0 && teamIdsB.length > 0
+        : true);
+
+  const toggleActorKind = (value: ActorKind) =>
+    setActorKinds((prev) =>
+      prev.includes(value) ? prev.filter((k) => k !== value) : [...prev, value],
+    );
+
+  const selectedIds = (options: HTMLSelectElement['selectedOptions']) =>
+    Array.from(options, (o) => o.value);
+
+  const addRule = () => {
+    if (!valid) return;
+    const base = { id: nextRuleId(rules), description: description.trim(), resourceTags };
+    const rule: Rule =
+      kind === 'forbidden-entry'
+        ? { ...base, kind, actorKinds }
+        : kind === 'separation'
+          ? { ...base, kind, teamIdsA, teamIdsB }
+          : { ...base, kind, direction };
+    setSceneRules([...rules, rule]);
+    setDescription('');
+    setTagsRaw('');
+    setActorKinds([]);
+    setTeamIdsA([]);
+    setTeamIdsB([]);
+  };
+
+  const teamSelect = (label: string, value: string[], onChange: (ids: string[]) => void) => (
+    <label>
+      {label}{' '}
+      <select
+        multiple
+        size={Math.min(Math.max(scene.teams.length, 2), 4)}
+        value={value}
+        aria-label={label}
+        onChange={(e) => onChange(selectedIds(e.target.selectedOptions))}
+      >
+        {scene.teams.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  return (
+    <div className="card">
+      <h3>
+        Rules <span className="count">{rules.length}</span>
+      </h3>
+      {rules.length === 0 && (
+        <p className="muted small">No rules. Rules constrain moves via resource tags.</p>
+      )}
+      {rules.map((r) => (
+        <div className="rule-item" key={r.id}>
+          <span className="chip chip-neutral">{r.kind}</span>
+          <span className="rule-desc">{r.description}</span>
+          <button
+            className="danger small"
+            title={`Remove rule: ${r.description}`}
+            onClick={() => setSceneRules(rules.filter((existing) => existing.id !== r.id))}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <p className="muted small">Add rule:</p>
+      <label>
+        Kind{' '}
+        <select value={kind} onChange={(e) => setKind(e.target.value as Rule['kind'])}>
+          <option value="forbidden-entry">Forbidden entry</option>
+          <option value="separation">Separation</option>
+          <option value="unidirectional">Unidirectional</option>
+        </select>
+      </label>
+      {kind === 'forbidden-entry' && (
+        <>
+          <p className="muted small">Actors barred from tagged resources:</p>
+          {ACTOR_KIND_OPTIONS.map((opt) => (
+            <label className="row" key={opt.value}>
+              <input
+                type="checkbox"
+                checked={actorKinds.includes(opt.value)}
+                onChange={() => toggleActorKind(opt.value)}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </>
+      )}
+      {kind === 'separation' && (
+        <>
+          {teamSelect('Side A teams', teamIdsA, setTeamIdsA)}
+          {teamSelect('Side B teams', teamIdsB, setTeamIdsB)}
+        </>
+      )}
+      {kind === 'unidirectional' && (
+        <label>
+          Direction{' '}
+          <select
+            value={direction}
+            onChange={(e) => setDirection(e.target.value as UnidirectionalRule['direction'])}
+          >
+            {DIRECTION_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label>
+        Resource tags{' '}
+        <input
+          value={tagsRaw}
+          placeholder="comma, separated"
+          onChange={(e) => setTagsRaw(e.target.value)}
+        />
+      </label>
+      <label>
+        Description{' '}
+        <input
+          value={description}
+          placeholder="Shown on violations"
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </label>
+      <div className="row">
+        <button disabled={!valid} onClick={addRule}>
+          Add rule
+        </button>
+      </div>
     </div>
   );
 }
@@ -251,6 +450,9 @@ function Inspector({ reservations }: { reservations: Reservation[] }) {
   const selectedResourceId = useVisSim((s) => s.selectedResourceId);
   const updateResourceMeta = useVisSim((s) => s.updateResourceMeta);
   const removeResource = useVisSim((s) => s.removeResource);
+  // Track *which* resource is pending deletion so a selection change while the
+  // dialog is open can never delete the newly selected resource by accident.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   const resource = selectedResourceId ? resourceById(scene, selectedResourceId) : undefined;
   if (!resource) return null;
@@ -271,18 +473,15 @@ function Inspector({ reservations }: { reservations: Reservation[] }) {
         .filter(Boolean),
     });
 
-  const onDelete = () => {
-    const affected = [
-      ...new Set(reservations.filter((r) => r.resourceId === resource.id).map((r) => r.moveId)),
-    ].map((id) => moves.find((m) => m.id === id)?.name ?? id);
-    const message =
-      affected.length === 0
-        ? `Delete ${resource.name}?`
-        : `${affected.length} move${affected.length === 1 ? '' : 's'} reserve ${resource.name}:\n` +
-          `${affected.join(', ')}\n\n` +
-          'Deleting it will recompute conflicts and approvers. Continue?';
-    if (window.confirm(message)) removeResource(resource.id);
-  };
+  const affected = [
+    ...new Set(reservations.filter((r) => r.resourceId === resource.id).map((r) => r.moveId)),
+  ].map((id) => moves.find((m) => m.id === id)?.name ?? id);
+  const deleteBody =
+    affected.length === 0
+      ? `Delete ${resource.name}?`
+      : `${affected.length} move${affected.length === 1 ? '' : 's'} reserve ${resource.name}:\n` +
+        `${affected.join(', ')}\n\n` +
+        'Deleting it will recompute conflicts and approvers. Continue?';
 
   return (
     <div className="card">
@@ -326,11 +525,130 @@ function Inspector({ reservations }: { reservations: Reservation[] }) {
         />
       </label>
       <div className="row">
-        <button className="danger" onClick={onDelete}>
+        <button className="danger" onClick={() => setConfirmingId(resource.id)}>
           Delete {resource.kind}
         </button>
       </div>
       <p className="muted small">Scene edits reset approvals (rev {revision}).</p>
+      <ConfirmDialog
+        open={confirmingId === resource.id}
+        title={`Delete ${resource.kind}`}
+        body={deleteBody}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          setConfirmingId(null);
+          removeResource(resource.id);
+        }}
+        onCancel={() => setConfirmingId(null)}
+      />
+    </div>
+  );
+}
+
+const BLOCK_KINDS: { value: BlockKind; label: string }[] = [
+  { value: 'wall', label: 'Wall' },
+  { value: 'pillar', label: 'Pillar' },
+  { value: 'box', label: 'Box' },
+  { value: 'slab', label: 'Slab' },
+];
+
+/** Renderer defaults per kind, mirrored so the color input always has a value. */
+const BLOCK_FALLBACK_COLOR: Record<BlockKind, string> = {
+  wall: '#8892aa',
+  pillar: '#8892aa',
+  box: '#46506e',
+  slab: '#46506e',
+};
+
+function BlockInspector() {
+  const scene = useVisSim((s) => s.scene);
+  const selectedBlockId = useVisSim((s) => s.selectedBlockId);
+  const updateBlockMeta = useVisSim((s) => s.updateBlockMeta);
+  const removeBlock = useVisSim((s) => s.removeBlock);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+
+  const block = selectedBlockId
+    ? (scene.blocks ?? []).find((b) => b.id === selectedBlockId)
+    : undefined;
+  if (!block) return null;
+
+  const commitNumber = (raw: string, apply: (v: number) => void) => {
+    const v = Number(raw);
+    if (Number.isFinite(v)) apply(v);
+  };
+
+  return (
+    <div className="card">
+      <h3>Block</h3>
+      <label>
+        Kind{' '}
+        <select
+          value={block.kind}
+          onChange={(e) => updateBlockMeta(block.id, { kind: e.target.value as BlockKind })}
+        >
+          {BLOCK_KINDS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Height{' '}
+        <input
+          key={`${block.id}-height`}
+          type="number"
+          min={0.1}
+          step={0.5}
+          defaultValue={block.height}
+          onBlur={(e) =>
+            commitNumber(e.target.value, (height) => {
+              if (height > 0) updateBlockMeta(block.id, { height });
+            })
+          }
+          onKeyDown={blurOnEnter}
+        />
+      </label>
+      <label>
+        Elevation{' '}
+        <input
+          key={`${block.id}-y`}
+          type="number"
+          step={0.5}
+          defaultValue={block.y ?? 0}
+          onBlur={(e) => commitNumber(e.target.value, (y) => updateBlockMeta(block.id, { y }))}
+          onKeyDown={blurOnEnter}
+        />
+      </label>
+      <label>
+        Color{' '}
+        <input
+          type="color"
+          value={block.color ?? BLOCK_FALLBACK_COLOR[block.kind]}
+          onChange={(e) => updateBlockMeta(block.id, { color: e.target.value })}
+        />
+      </label>
+      <p className="muted">
+        <span className="chip">{block.kind}</span> ({block.rect.x}, {block.rect.z}) · {block.rect.w}
+        ×{block.rect.d}
+      </p>
+      <div className="row">
+        <button className="danger" onClick={() => setConfirmingId(block.id)}>
+          Delete block
+        </button>
+      </div>
+      <p className="muted small">Blocks are visual context only — never reservable.</p>
+      <ConfirmDialog
+        open={confirmingId === block.id}
+        title="Delete block"
+        body={`Delete this ${block.kind}? Blocks are visual context only, so no moves are affected.`}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          setConfirmingId(null);
+          removeBlock(block.id);
+        }}
+        onCancel={() => setConfirmingId(null)}
+      />
     </div>
   );
 }
@@ -382,7 +700,9 @@ export default function SidePanel({ reservations, conflicts, approverTeamIds, vi
 
       {mode === 'draw' && <DraftForm />}
       {mode === 'scene' && <SceneCard />}
+      {mode === 'scene' && <RulesCard />}
       {mode === 'scene' && <Inspector reservations={reservations} />}
+      {mode === 'scene' && <BlockInspector />}
 
       <div className="card">
         <h3>

@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import Viewport3D from './components/Viewport3D';
 import TimelineDock from './components/Timeline';
 import SidePanel from './components/SidePanel';
 import PlanIO from './components/PlanIO';
+import ConfirmDialog from './components/ConfirmDialog';
 import { Icon } from './components/icons';
 import type { IconName } from './components/icons';
 import { useShortcuts } from './hooks/useShortcuts';
@@ -16,6 +18,9 @@ import type { Conflict, RuleViolation } from './domain/types';
 // Left tool rail: global tools always, scene tools only while editing the scene.
 // ---------------------------------------------------------------------------
 
+/** Everything the armed-add tools need per kind: icon, label, placement hint. */
+type PendingAddKind = 'zone' | 'connector' | 'wall' | 'box';
+
 function ToolRail() {
   const mode = useVisSim((s) => s.mode);
   const toggleMode = useVisSim((s) => s.toggleMode);
@@ -26,6 +31,7 @@ function ToolRail() {
   const resetSceneToDefault = useVisSim((s) => s.resetSceneToDefault);
   const leftRail = useVisSim((s) => s.ui.leftRail);
   const setUi = useVisSim((s) => s.setUi);
+  const [confirmingReset, setConfirmingReset] = useState(false);
 
   const tool = (m: Mode, icon: IconName, label: string, key: string, hint: string): ReactNode => (
     <button
@@ -37,6 +43,23 @@ function ToolRail() {
       <Icon name={icon} />
       <span className="tool-label">{label}</span>
       <span className="tool-key">{key}</span>
+    </button>
+  );
+
+  const addTool = (
+    kind: PendingAddKind,
+    icon: IconName,
+    label: string,
+    hint: string,
+  ): ReactNode => (
+    <button
+      className={`tool-btn ${pendingAdd === kind ? 'active' : ''}`}
+      title={`${label} — ${hint}`}
+      aria-pressed={pendingAdd === kind}
+      onClick={() => setPendingAdd(pendingAdd === kind ? null : kind)}
+    >
+      <Icon name={icon} />
+      <span className="tool-label">{label}</span>
     </button>
   );
 
@@ -57,24 +80,10 @@ function ToolRail() {
           <>
             <div className="rail-divider" />
             <div className="rail-section">Scene tools</div>
-            <button
-              className={`tool-btn ${pendingAdd === 'zone' ? 'active' : ''}`}
-              title="Add zone — click two corners on the ground"
-              aria-pressed={pendingAdd === 'zone'}
-              onClick={() => setPendingAdd(pendingAdd === 'zone' ? null : 'zone')}
-            >
-              <Icon name="zone" />
-              <span className="tool-label">Add zone</span>
-            </button>
-            <button
-              className={`tool-btn ${pendingAdd === 'connector' ? 'active' : ''}`}
-              title="Add connector — click two corners on the ground"
-              aria-pressed={pendingAdd === 'connector'}
-              onClick={() => setPendingAdd(pendingAdd === 'connector' ? null : 'connector')}
-            >
-              <Icon name="connector" />
-              <span className="tool-label">Add connector</span>
-            </button>
+            {addTool('zone', 'zone', 'Add zone', 'click two corners on the ground')}
+            {addTool('connector', 'connector', 'Add connector', 'click two corners on the ground')}
+            {addTool('wall', 'wall', 'Add wall', 'click two corners — visual only, not reservable')}
+            {addTool('box', 'box', 'Add box', 'click two corners — visual only, not reservable')}
             <button
               className="tool-btn"
               title="Duplicate selected resource (Ctrl/Cmd+D)"
@@ -87,15 +96,22 @@ function ToolRail() {
             <button
               className="tool-btn"
               title="Reset scene to its default layout and plan"
-              onClick={() => {
-                if (window.confirm('Reset this scene to its default layout and plan?')) {
-                  resetSceneToDefault();
-                }
-              }}
+              onClick={() => setConfirmingReset(true)}
             >
               <Icon name="reset" />
               <span className="tool-label">Reset scene</span>
             </button>
+            <ConfirmDialog
+              open={confirmingReset}
+              title="Reset scene"
+              body="Reset this scene to its default layout and plan? Current edits are discarded."
+              confirmLabel="Reset scene"
+              onConfirm={() => {
+                setConfirmingReset(false);
+                resetSceneToDefault();
+              }}
+              onCancel={() => setConfirmingReset(false)}
+            />
           </>
         )}
       </div>
@@ -117,13 +133,21 @@ function ToolRail() {
 // Status/hint bar: contextual instructions left, plan health readout right.
 // ---------------------------------------------------------------------------
 
-function modeHint(mode: Mode, pendingAdd: 'zone' | 'connector' | null): string {
+/** Natural-language noun per armed-add kind; Record keeps this exhaustive. */
+const PENDING_ADD_NOUN: Record<PendingAddKind, string> = {
+  zone: 'a zone',
+  connector: 'a connector',
+  wall: 'a wall block',
+  box: 'a box block',
+};
+
+function modeHint(mode: Mode, pendingAdd: PendingAddKind | null): string {
   if (mode === 'draw') {
     return 'Draw move — click the ground to add waypoints · finish in the right panel · Esc to cancel';
   }
   if (mode === 'scene') {
     if (pendingAdd) {
-      return `Add ${pendingAdd} — click the ground for the first corner, click again to place · Esc to disarm`;
+      return `Add ${PENDING_ADD_NOUN[pendingAdd]} — click the ground for the first corner, click again to place · Esc to disarm`;
     }
     return 'Edit scene — click a resource to select · drag to move, handles to resize · Ctrl/Cmd+D duplicate · Esc to exit';
   }

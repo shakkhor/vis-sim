@@ -28,6 +28,8 @@ export type IconName =
   | 'scene'
   | 'zone'
   | 'connector'
+  | 'wall'
+  | 'box'
   | 'duplicate'
   | 'reset'
   | 'undo'
@@ -70,6 +72,18 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="3" y="9" width="6" height="6" rx="1" />
       <rect x="15" y="9" width="6" height="6" rx="1" />
       <path d="M9 12h6" />
+    </>
+  ),
+  wall: (
+    <>
+      <rect x="3" y="6" width="18" height="12" rx="1" />
+      <path d="M3 12h18M9 6v6M15 12v6" />
+    </>
+  ),
+  box: (
+    <>
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
+      <path d="M4 7.5l8 4.5 8-4.5M12 12v9" />
     </>
   ),
   duplicate: (
