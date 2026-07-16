@@ -13,7 +13,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * so the listener registers once and never goes stale.
  *
  * - Space: play/pause
- * - Escape: layered cancel — draw: clear draft + back to select;
+ * - Escape: layered cancel — team focus clears first (any mode); then
+ *   draw: clear draft + back to select;
  *   scene: disarm add tool, else clear selection, else back to select (PRD §4)
  * - V / M / E: tools — select / draw move / edit scene (M and E toggle back to select)
  * - 1 / 2 / 3: view mode 3d / top / iso
@@ -63,6 +64,12 @@ export function useShortcuts(): void {
           state.togglePlay();
           break;
         case 'Escape':
+          // "View as team" focus is the outermost layer: exit it before any
+          // pendingAdd/selection/mode handling, regardless of mode.
+          if (state.focusTeamId) {
+            state.setFocusTeam(null);
+            break;
+          }
           if (state.mode === 'draw') {
             state.clearDraft();
             state.setMode('select');

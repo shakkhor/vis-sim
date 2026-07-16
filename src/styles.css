@@ -328,6 +328,22 @@ button.danger-solid:hover:not(:disabled) {
   gap: 10px;
 }
 
+/* Slim "Viewing as <team>" banner while per-team focus is active (plan §5.4). */
+.focus-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #1d2a3e;
+  border: 1px solid #35507a;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.focus-banner button {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
 /* ----------------------------------------------------------------- cards */
 
 .card {

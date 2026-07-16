@@ -9,7 +9,9 @@ import {
   PerspectiveCamera,
 } from '@react-three/drei';
 import { Color, Mesh, Vector3 } from 'three';
+import type { PerspectiveCamera as PerspectiveCameraImpl } from 'three';
 import { useVisSim } from '../state/store';
+import type { TeamFocus } from '../state/selectors';
 import { teamColor } from '../domain/scene';
 import { actorPositions } from '../domain/actors';
 import { snap, snapRectToNeighbors } from '../domain/sceneEdit';
@@ -75,6 +77,8 @@ function ResourceMesh({
   conflictActive,
   selected,
   hovered,
+  dimmed,
+  focusRingColor,
   onSelect,
   onDragStart,
   onHoverChange,
@@ -84,6 +88,10 @@ function ResourceMesh({
   conflictActive: boolean;
   selected: boolean;
   hovered: boolean;
+  /** Team focus active and this resource is not owned by the focused team. */
+  dimmed: boolean;
+  /** Team color outline for resources owned by the focused team, else null. */
+  focusRingColor: string | null;
   onSelect?: (e: ThreeEvent<MouseEvent>) => void;
   onDragStart?: (e: ThreeEvent<PointerEvent>) => void;
   onHoverChange?: (hovering: boolean) => void;
@@ -93,11 +101,12 @@ function ResourceMesh({
   const { rect, kind } = resource;
   const color = kind === 'connector' ? '#e8c34a' : teamColor(scene, resource.ownerTeamIds[0]);
   const baseOpacity = kind === 'connector' ? 0.55 : 0.28;
-  const opacity = selected
+  const interactedOpacity = selected
     ? Math.min(1, baseOpacity + 0.3)
     : hovered
       ? Math.min(1, baseOpacity + 0.14)
       : baseOpacity;
+  const opacity = dimmed ? interactedOpacity * 0.35 : interactedOpacity;
   return (
     <group
       position={[rect.x + rect.w / 2, 0, rect.z + rect.d / 2]}
@@ -123,6 +132,20 @@ function ResourceMesh({
           lineWidth={2.5}
         />
       )}
+      {focusRingColor && (
+        <Line
+          points={[
+            [-rect.w / 2, 0.36, -rect.d / 2],
+            [rect.w / 2, 0.36, -rect.d / 2],
+            [rect.w / 2, 0.36, rect.d / 2],
+            [-rect.w / 2, 0.36, rect.d / 2],
+            [-rect.w / 2, 0.36, -rect.d / 2],
+          ]}
+          color={focusRingColor}
+          lineWidth={3}
+        />
+      )}
+      {/* Conflict flash renders above rings and ignores dimming — it always wins. */}
       {conflictActive && (
         <mesh position={[0, 0.45, 0]}>
           <boxGeometry args={[rect.w + 0.6, 0.3, rect.d + 0.6]} />
@@ -135,7 +158,7 @@ function ResourceMesh({
         center
         distanceFactor={labelDistanceFactor}
         position={[0, 1.4, 0]}
-        style={{ pointerEvents: 'none' }}
+        style={{ pointerEvents: 'none', opacity: dimmed ? 0.35 : 1 }}
       >
         <div className="zone-label">
           {resource.name}
@@ -185,11 +208,14 @@ const BLOCK_COLORS: Record<BlockKind, string> = {
 function BlockMesh({
   block,
   selected,
+  dimmed,
   onSelect,
   onDragStart,
 }: {
   block: Block;
   selected: boolean;
+  /** Team focus active: blocks are context for everyone, so only dim slightly. */
+  dimmed: boolean;
   onSelect?: (e: ThreeEvent<MouseEvent>) => void;
   onDragStart?: (e: ThreeEvent<PointerEvent>) => void;
 }) {
@@ -212,6 +238,8 @@ function BlockMesh({
           color={color}
           emissive={selected ? color : '#000000'}
           emissiveIntensity={selected ? 0.45 : 0}
+          transparent={dimmed}
+          opacity={dimmed ? 0.55 : 1}
         />
       </mesh>
       {selected && (
@@ -234,13 +262,24 @@ function BlockMesh({
 /** One actor glyph at position `p`. Shape encodes the actor kind: cohort =
  * small sphere, staff = capsule-ish (cylinder + sphere cap), vehicle = box,
  * material = small darker cube. */
-function ActorGlyph({ kind, p, color }: { kind: Move['actorKind']; p: Vec2; color: string }) {
+function ActorGlyph({
+  kind,
+  p,
+  color,
+  opacity = 1,
+}: {
+  kind: Move['actorKind'];
+  p: Vec2;
+  color: string;
+  opacity?: number;
+}) {
+  const transparent = opacity < 1;
   switch (kind) {
     case 'vehicle':
       return (
         <mesh position={[p.x, 0.8, p.z]}>
           <boxGeometry args={[2.2, 1.4, 1.2]} />
-          <meshStandardMaterial color={color} />
+          <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
         </mesh>
       );
     case 'staff':
@@ -248,11 +287,11 @@ function ActorGlyph({ kind, p, color }: { kind: Move['actorKind']; p: Vec2; colo
         <group position={[p.x, 0, p.z]}>
           <mesh position={[0, 0.6, 0]}>
             <cylinderGeometry args={[0.32, 0.32, 1.0, 12]} />
-            <meshStandardMaterial color={color} />
+            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
           </mesh>
           <mesh position={[0, 1.1, 0]}>
             <sphereGeometry args={[0.32, 12, 12]} />
-            <meshStandardMaterial color={color} />
+            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
           </mesh>
         </group>
       );
@@ -260,14 +299,18 @@ function ActorGlyph({ kind, p, color }: { kind: Move['actorKind']; p: Vec2; colo
       return (
         <mesh position={[p.x, 0.45, p.z]}>
           <boxGeometry args={[0.9, 0.9, 0.9]} />
-          <meshStandardMaterial color={new Color(color).multiplyScalar(0.72)} />
+          <meshStandardMaterial
+            color={new Color(color).multiplyScalar(0.72)}
+            transparent={transparent}
+            opacity={opacity}
+          />
         </mesh>
       );
     default: // cohort
       return (
         <mesh position={[p.x, 0.7, p.z]}>
           <sphereGeometry args={[0.45, 12, 12]} />
-          <meshStandardMaterial color={color} />
+          <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
         </mesh>
       );
   }
@@ -275,7 +318,17 @@ function ActorGlyph({ kind, p, color }: { kind: Move['actorKind']; p: Vec2; colo
 
 /** Actors of one move at the current playhead, staggered along the window.
  * actorPositions() stays the single source of positions. */
-function MoveActors({ scene, move, t }: { scene: SceneDef; move: Move; t: number }) {
+function MoveActors({
+  scene,
+  move,
+  t,
+  opacity = 1,
+}: {
+  scene: SceneDef;
+  move: Move;
+  t: number;
+  opacity?: number;
+}) {
   const positions = actorPositions(move, t);
   if (positions.length === 0) return null;
 
@@ -284,7 +337,7 @@ function MoveActors({ scene, move, t }: { scene: SceneDef; move: Move; t: number
   return (
     <group>
       {positions.map((p, i) => (
-        <ActorGlyph key={i} kind={move.actorKind} p={p} color={color} />
+        <ActorGlyph key={i} kind={move.actorKind} p={p} color={color} opacity={opacity} />
       ))}
     </group>
   );
@@ -324,7 +377,17 @@ function PathArrows({ scene, move, selected }: { scene: SceneDef; move: Move; se
   );
 }
 
-function PathLine({ scene, move, selected }: { scene: SceneDef; move: Move; selected: boolean }) {
+function PathLine({
+  scene,
+  move,
+  selected,
+  opacity = 1,
+}: {
+  scene: SceneDef;
+  move: Move;
+  selected: boolean;
+  opacity?: number;
+}) {
   const points = move.path.map((p) => new Vector3(p.x, 0.5, p.z));
   return (
     <Line
@@ -334,6 +397,8 @@ function PathLine({ scene, move, selected }: { scene: SceneDef; move: Move; sele
       dashed={!selected}
       dashSize={1}
       gapSize={0.6}
+      transparent={opacity < 1}
+      opacity={opacity}
     />
   );
 }
@@ -356,14 +421,81 @@ function Playback() {
   return null;
 }
 
+/** OrbitControls surface we drive when reframing (drei's controls as state). */
+interface ControlsLike {
+  target: Vector3;
+  update: () => void;
+}
+
+/**
+ * "View as team" camera framing (plan §5.4): when focus engages, frame the
+ * bounding box of the focused team's owned resources — position the 3D
+ * perspective camera to fit, or pan the ortho views' orbit target to the
+ * center. Runs ONCE per focus change (keyed on the team id, reading everything
+ * else imperatively) so it never fights the user's subsequent orbiting.
+ */
+function FocusFraming({ focus }: { focus: TeamFocus | null }) {
+  const get = useThree((s) => s.get);
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+  const focusTeamId = focus?.teamId ?? null;
+
+  useEffect(() => {
+    const f = focusRef.current;
+    if (!focusTeamId || !f) return;
+    const { scene } = useVisSim.getState();
+    const rects = scene.resources.filter((r) => f.ownedResourceIds.has(r.id)).map((r) => r.rect);
+    if (rects.length === 0) return;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (const rect of rects) {
+      minX = Math.min(minX, rect.x);
+      maxX = Math.max(maxX, rect.x + rect.w);
+      minZ = Math.min(minZ, rect.z);
+      maxZ = Math.max(maxZ, rect.z + rect.d);
+    }
+    const center = new Vector3((minX + maxX) / 2, 0, (minZ + maxZ) / 2);
+    // Half-diagonal of the footprint, floored so a single small zone still
+    // frames with breathing room instead of an extreme close-up.
+    const radius = Math.max(Math.hypot(maxX - minX, maxZ - minZ) / 2, 8);
+
+    const { camera, controls } = get();
+    const orbit = controls as unknown as ControlsLike | null;
+    const persp = camera as PerspectiveCameraImpl;
+    if (persp.isPerspectiveCamera) {
+      // Simple fit: back off along a fixed elevated direction far enough that
+      // the bounding sphere fits the vertical fov, with a 1.4 margin.
+      const distance = (radius / Math.tan((persp.fov * Math.PI) / 360)) * 1.4;
+      const offset = new Vector3(0, 1.1, 1).normalize().multiplyScalar(distance);
+      camera.position.copy(center.clone().add(offset));
+      camera.lookAt(center);
+    } else if (orbit) {
+      // Ortho views keep their orientation and zoom — translate camera and
+      // target together so the view pans onto the focused resources.
+      camera.position.add(center.clone().sub(orbit.target));
+    }
+    if (orbit) {
+      orbit.target.copy(center);
+      orbit.update();
+    }
+  }, [focusTeamId, get]);
+
+  return null;
+}
+
 /** Everything that renders from (or edits) the plan/scene. Lives inside the
  * Canvas so it can reach the default OrbitControls via useThree. */
 function SceneBody({
   conflicts,
   violations,
+  focus,
 }: {
   conflicts: Conflict[];
   violations: RuleViolation[];
+  focus: TeamFocus | null;
 }) {
   const scene = useVisSim((s) => s.scene);
   const moves = useVisSim((s) => s.moves);
@@ -604,6 +736,12 @@ function SceneBody({
           conflictActive={activeConflictResourceIds.has(r.id)}
           selected={mode === 'scene' && r.id === selectedResourceId}
           hovered={mode === 'scene' && r.id === hoveredResourceId}
+          dimmed={focus !== null && !focus.ownedResourceIds.has(r.id)}
+          focusRingColor={
+            focus !== null && focus.ownedResourceIds.has(r.id)
+              ? teamColor(scene, focus.teamId)
+              : null
+          }
           onSelect={
             editable
               ? (e) => {
@@ -699,6 +837,7 @@ function SceneBody({
           key={b.id}
           block={b}
           selected={mode === 'scene' && b.id === selectedBlockId}
+          dimmed={focus !== null}
           onSelect={
             editable
               ? (e) => {
@@ -747,13 +886,23 @@ function SceneBody({
         </mesh>
       )}
 
-      {moves.map((m) => (
-        <group key={m.id}>
-          <PathLine scene={scene} move={m} selected={m.id === selectedMoveId} />
-          <PathArrows scene={scene} move={m} selected={m.id === selectedMoveId} />
-          <MoveActors scene={scene} move={m} t={playhead} />
-        </group>
-      ))}
+      {moves.map((m) => {
+        // Team focus: moves irrelevant to the focused team fade to a trace and
+        // lose their direction arrows; relevant moves render at full strength.
+        const relevant = focus === null || focus.relevantMoveIds.has(m.id);
+        return (
+          <group key={m.id}>
+            <PathLine
+              scene={scene}
+              move={m}
+              selected={m.id === selectedMoveId}
+              opacity={relevant ? 1 : 0.15}
+            />
+            {relevant && <PathArrows scene={scene} move={m} selected={m.id === selectedMoveId} />}
+            <MoveActors scene={scene} move={m} t={playhead} opacity={relevant ? 1 : 0.15} />
+          </group>
+        );
+      })}
 
       {selectedMove &&
         selectedMove.path.map((p, i) => (
@@ -794,9 +943,12 @@ function SceneBody({
 export default function Viewport3D({
   conflicts,
   violations = [],
+  focus = null,
 }: {
   conflicts: Conflict[];
   violations?: RuleViolation[];
+  /** "View as team" focus (plan §5.4); null renders the neutral shared view. */
+  focus?: TeamFocus | null;
 }) {
   const viewMode = useVisSim((s) => s.viewMode);
   const pendingAdd = useVisSim((s) => s.pendingAdd);
@@ -823,7 +975,8 @@ export default function Viewport3D({
         <OrthographicCamera makeDefault position={[90, 90, 90]} zoom={9} near={0.1} far={600} />
       )}
 
-      <SceneBody conflicts={conflicts} violations={violations} />
+      <SceneBody conflicts={conflicts} violations={violations} focus={focus} />
+      <FocusFraming focus={focus} />
 
       <OrbitControls
         key={viewMode}

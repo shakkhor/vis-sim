@@ -10,7 +10,7 @@ import type { IconName } from './components/icons';
 import { useShortcuts } from './hooks/useShortcuts';
 import { listPersistedCustomScenes, nextLeftRail, useVisSim } from './state/store';
 import type { Mode } from './state/store';
-import { usePlanAnalysis } from './state/selectors';
+import { usePlanAnalysis, useTeamFocus } from './state/selectors';
 import { SCENES } from './domain/scenes';
 import type { Conflict, RuleViolation } from './domain/types';
 
@@ -203,6 +203,7 @@ export default function App() {
   const ui = useVisSim((s) => s.ui);
   const setUi = useVisSim((s) => s.setUi);
   const { reservations, conflicts, approverTeamIds, violations } = usePlanAnalysis();
+  const teamFocus = useTeamFocus(reservations);
 
   // Custom scenes (not in the built-in registry): the active one plus any persisted
   // ones, deduped by id so the <select> always has an option matching scene.id.
@@ -310,7 +311,7 @@ export default function App() {
       <div className="workbench">
         <ToolRail />
         <div className="viewport">
-          <Viewport3D conflicts={conflicts} violations={violations} />
+          <Viewport3D conflicts={conflicts} violations={violations} focus={teamFocus} />
         </div>
         <button
           className="edge-tab edge-tab-right"

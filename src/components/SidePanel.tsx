@@ -6,6 +6,7 @@ import { fmtTime } from '../domain/engine';
 import { generateBriefingHtml } from '../export/briefing';
 import { SCENES } from '../domain/scenes';
 import ConfirmDialog from './ConfirmDialog';
+import { Icon } from './icons';
 import type {
   ActorKind,
   BlockKind,
@@ -667,6 +668,8 @@ export default function SidePanel({ reservations, conflicts, approverTeamIds, vi
   const selectMove = useVisSim((s) => s.selectMove);
   const selectedMoveId = useVisSim((s) => s.selectedMoveId);
   const deleteMove = useVisSim((s) => s.deleteMove);
+  const focusTeamId = useVisSim((s) => s.focusTeamId);
+  const setFocusTeam = useVisSim((s) => s.setFocusTeam);
 
   const blocking = conflicts.filter((c) => c.blocking);
   const approvalsGated = blocking.length > 0 || violations.length > 0;
@@ -680,9 +683,37 @@ export default function SidePanel({ reservations, conflicts, approverTeamIds, vi
 
   const moveName = (id: string) => moves.find((m) => m.id === id)?.name ?? id;
   const authorTeam = teamById(scene, scene.authorTeamId);
+  const focusedTeam = focusTeamId ? teamById(scene, focusTeamId) : undefined;
+
+  /** Eye toggle: per-team perspective playback (plan §5.4). Click again to exit. */
+  const focusButton = (teamId: string) => {
+    const active = focusTeamId === teamId;
+    const name = teamById(scene, teamId)?.name ?? teamId;
+    const label = active ? 'Exit team view' : `View as ${name}`;
+    return (
+      <button
+        className={`icon-btn ${active ? 'active' : ''}`}
+        title={label}
+        aria-label={label}
+        aria-pressed={active}
+        onClick={() => setFocusTeam(active ? null : teamId)}
+      >
+        <Icon name="eye" size={14} />
+      </button>
+    );
+  };
 
   return (
     <div className="side-panel">
+      {focusTeamId && (
+        <div className="focus-banner">
+          <i className="swatch" style={{ background: focusedTeam?.color }} />
+          <span className="grow">
+            Viewing as <b>{focusedTeam?.name ?? focusTeamId}</b>
+          </span>
+          <button onClick={() => setFocusTeam(null)}>Exit view</button>
+        </div>
+      )}
       <div className="card">
         <div className="row space-between">
           <h2>{planName}</h2>
@@ -765,6 +796,15 @@ export default function SidePanel({ reservations, conflicts, approverTeamIds, vi
       <div className="card">
         <h3>Approvals</h3>
         <p className="muted small">Prototype note: you act as every reviewer here.</p>
+        <div className="row space-between approver">
+          <span>
+            <i className="swatch" style={{ background: authorTeam?.color }} /> {authorTeam?.name}
+          </span>
+          <span className="row">
+            {focusButton(scene.authorTeamId)}
+            <span className="chip chip-neutral">author</span>
+          </span>
+        </div>
         {approverTeamIds.map((id) => {
           const team = teamById(scene, id);
           const approved = approvals[id] === 'approved';
@@ -773,13 +813,16 @@ export default function SidePanel({ reservations, conflicts, approverTeamIds, vi
               <span>
                 <i className="swatch" style={{ background: team?.color }} /> {team?.name}
               </span>
-              {approved ? (
-                <span className="chip chip-green">approved</span>
-              ) : (
-                <button disabled={approvalsGated || published} onClick={() => approve(id)}>
-                  Approve
-                </button>
-              )}
+              <span className="row">
+                {focusButton(id)}
+                {approved ? (
+                  <span className="chip chip-green">approved</span>
+                ) : (
+                  <button disabled={approvalsGated || published} onClick={() => approve(id)}>
+                    Approve
+                  </button>
+                )}
+              </span>
             </div>
           );
         })}

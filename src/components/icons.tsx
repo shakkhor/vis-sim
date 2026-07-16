@@ -31,6 +31,7 @@ export type IconName =
   | 'wall'
   | 'box'
   | 'duplicate'
+  | 'eye'
   | 'reset'
   | 'undo'
   | 'redo'
@@ -90,6 +91,12 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <rect x="8.5" y="8.5" width="12" height="12" rx="2" />
       <path d="M15.5 4.5h-9a2 2 0 0 0-2 2v9" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+      <circle cx="12" cy="12" r="2.8" />
     </>
   ),
   reset: (
