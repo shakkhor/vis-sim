@@ -26,17 +26,24 @@ Shipped since first handoff: scene rename + team editor (with governance guards)
 custom-scene deletion, Delete-key scoping fix (US-6), unidirectional-flow rule kind
 (corridor-2 is one-way east in pharma), 2D/Iso label fix, preview regenerated.
 
-## Backlog, in priority order (user direction: scene building > governance/permissions)
+## State update (wave 8, 2026-07-16 ~13:00 +06): 306 tests green.
+Shipped: in-app block editing (select/drag/resize/add wall+box/delete, block
+inspector with kind/height/elevation/color), inline ConfirmDialog replacing all
+window.confirm, rule editor UI (add/remove all three rule kinds), path direction
+arrows, per-kind actor meshes. Repo is on GitHub (github-personal:shakkhor/vis-sim).
 
-1. Block editing in scene mode (blocks are data but not editable in-app: select/move/
-   add walls; consider auto-wall generation around a zone).
-2. Inline dialogs replacing window.confirm (PRD deviation flagged by wave-4 master).
-3. Rule editor UI (rules are data but only editable in JSON; scene card could list
-   rules with add/remove for the three kinds).
-4. Actor library polish: distinct meshes per actor kind, counts badge, path arrows
-   showing direction (pairs with the unidirectional rule).
-5. Per-reviewer scoped playback (approver sees their zones framed) — deferred
-   governance, only after scene building satisfies the user.
+Known deviation (accepted): Delete/Backspace shortcut deletes without the inline
+confirm dialog (undoable via Ctrl+Z, so low risk; PRD US-6 wanted a confirm —
+revisit if a design partner trips on it).
+
+## Backlog, in priority order
+
+1. Design-partner feedback pass — user is showing the app to an ops person; their
+   feedback reorders everything below.
+2. Per-reviewer scoped playback (approver sees their zones framed).
+3. Auto-wall generation around a zone (one click walls a room).
+4. Custom scene: connector capacity fields + capacity rule kind.
+5. Multi-user backend (Phase 1→2 boundary — architecture decision, not a wave).
 
 ## Known constraints
 
