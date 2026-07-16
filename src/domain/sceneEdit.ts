@@ -4,7 +4,17 @@
 // in WeakMaps keyed off SceneDef object identity, so an edited scene MUST be a
 // fresh object (with fresh nested objects for anything that changed) to get
 // fresh lookups instead of stale cached ones.
-import type { Move, Rect, Resource, ResourceKind, SceneDef, Team, Vec2 } from './types';
+import type {
+  Block,
+  BlockKind,
+  Move,
+  Rect,
+  Resource,
+  ResourceKind,
+  SceneDef,
+  Team,
+  Vec2,
+} from './types';
 
 /** Ground-plane grid step: all edited geometry snaps to this (PRD §2.8). */
 export const GRID = 0.5;
@@ -211,6 +221,99 @@ export function duplicateResource(scene: SceneDef, resourceId: string): SceneDef
     ...(source.tags !== undefined ? { tags: [...source.tags] } : {}),
   };
   return { ...scene, resources: [...scene.resources, copy] };
+}
+
+/** Minimum footprint width/depth for blocks — thin walls are legitimate. */
+const BLOCK_MIN_SIZE = 0.5;
+
+/** Blocks are optional on SceneDef; treat the absent case as an empty list. */
+function blocksOf(scene: SceneDef): Block[] {
+  return scene.blocks ?? [];
+}
+
+function mustFindBlock(scene: SceneDef, blockId: string): Block {
+  const found = blocksOf(scene).find((b) => b.id === blockId);
+  if (!found) {
+    throw new Error(`Unknown block id: ${blockId}`);
+  }
+  return found;
+}
+
+/** New scene with `blockId`'s entry replaced by `update(old)`. Never mutates. */
+function withBlock(scene: SceneDef, blockId: string, update: (b: Block) => Block): SceneDef {
+  mustFindBlock(scene, blockId);
+  return {
+    ...scene,
+    blocks: blocksOf(scene).map((b) => (b.id === blockId ? update(b) : b)),
+  };
+}
+
+/** Clamp a rect to the minimum block footprint after snapping. */
+function enforceBlockMinSize(r: Rect): Rect {
+  return { ...r, w: Math.max(BLOCK_MIN_SIZE, r.w), d: Math.max(BLOCK_MIN_SIZE, r.d) };
+}
+
+/** Smallest `blk-${kind}-${n}` (n >= 1) not already used by a block in the scene. */
+export function makeBlockId(scene: SceneDef, kind: BlockKind): string {
+  const used = new Set(blocksOf(scene).map((b) => b.id));
+  let n = 1;
+  while (used.has(`blk-${kind}-${n}`)) n++;
+  return `blk-${kind}-${n}`;
+}
+
+/** Add a block; snaps its rect and enforces min size. Throws on duplicate id or height <= 0. */
+export function addBlock(scene: SceneDef, block: Block): SceneDef {
+  if (blocksOf(scene).some((b) => b.id === block.id)) {
+    throw new Error(`Duplicate block id: ${block.id}`);
+  }
+  if (!(block.height > 0)) {
+    throw new Error(`Block height must be > 0, got: ${block.height}`);
+  }
+  const added: Block = { ...block, rect: enforceBlockMinSize(snapRect(block.rect)) };
+  return { ...scene, blocks: [...blocksOf(scene), added] };
+}
+
+/** Translate a block's footprint by (dx, dz), snapped to the grid. */
+export function moveBlock(scene: SceneDef, blockId: string, dx: number, dz: number): SceneDef {
+  return withBlock(scene, blockId, (b) => ({
+    ...b,
+    rect: { ...b.rect, x: snap(b.rect.x + dx), z: snap(b.rect.z + dz) },
+  }));
+}
+
+/** Replace a block's footprint; snaps to grid and enforces min w/d. */
+export function resizeBlockTo(scene: SceneDef, blockId: string, rect: Rect): SceneDef {
+  return withBlock(scene, blockId, (b) => ({
+    ...b,
+    rect: enforceBlockMinSize(snapRect(rect)),
+  }));
+}
+
+/** Remove a block. Throws on unknown id. */
+export function removeBlock(scene: SceneDef, blockId: string): SceneDef {
+  mustFindBlock(scene, blockId);
+  return { ...scene, blocks: blocksOf(scene).filter((b) => b.id !== blockId) };
+}
+
+/** Update a block's kind / height / y / color. Throws on height <= 0 or y < 0. */
+export function updateBlockMeta(
+  scene: SceneDef,
+  blockId: string,
+  meta: { kind?: BlockKind; height?: number; y?: number; color?: string },
+): SceneDef {
+  if (meta.height !== undefined && !(meta.height > 0)) {
+    throw new Error(`Block height must be > 0, got: ${meta.height}`);
+  }
+  if (meta.y !== undefined && !(meta.y >= 0)) {
+    throw new Error(`Block base elevation must be >= 0, got: ${meta.y}`);
+  }
+  return withBlock(scene, blockId, (b) => ({
+    ...b,
+    ...(meta.kind !== undefined ? { kind: meta.kind } : {}),
+    ...(meta.height !== undefined ? { height: meta.height } : {}),
+    ...(meta.y !== undefined ? { y: meta.y } : {}),
+    ...(meta.color !== undefined ? { color: meta.color } : {}),
+  }));
 }
 
 /**

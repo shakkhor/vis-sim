@@ -2,23 +2,29 @@ import { describe, expect, it } from 'vitest';
 import { resourceById, teamById } from './scene';
 import {
   GRID,
+  addBlock,
   addResource,
   addTeam,
   duplicateResource,
+  makeBlockId,
   makeResourceId,
+  moveBlock,
   moveResource,
   moveWaypoint,
+  removeBlock,
   removeResource,
   removeTeam,
   renameScene,
+  resizeBlockTo,
   resizeResource,
   snap,
   snapRect,
   snapRectToNeighbors,
+  updateBlockMeta,
   updateResourceMeta,
   updateTeam,
 } from './sceneEdit';
-import type { Move, Rect, Resource, SceneDef } from './types';
+import type { Block, Move, Rect, Resource, SceneDef } from './types';
 
 function makeScene(): SceneDef {
   return {
@@ -68,14 +74,40 @@ function makeMove(): Move {
   };
 }
 
+/** makeScene plus two blocks (a wall and a pillar) for block-helper tests. */
+function makeSceneWithBlocks(): SceneDef {
+  return {
+    ...makeScene(),
+    blocks: [
+      { id: 'blk-wall-1', kind: 'wall', rect: { x: 0, z: 10, w: 8, d: 0.5 }, height: 3 },
+      {
+        id: 'blk-pillar-1',
+        kind: 'pillar',
+        rect: { x: 12, z: 12, w: 0.5, d: 0.5 },
+        height: 4,
+        y: 0,
+        color: '#888888',
+      },
+    ],
+  };
+}
+
 /** Assert `edit` returned a new scene and left the input byte-for-byte untouched. */
-function expectImmutable(edit: (scene: SceneDef) => SceneDef): SceneDef {
-  const scene = makeScene();
+function expectImmutable(
+  edit: (scene: SceneDef) => SceneDef,
+  make: () => SceneDef = makeScene,
+): SceneDef {
+  const scene = make();
   const snapshot = structuredClone(scene);
   const next = edit(scene);
   expect(scene).toEqual(snapshot);
   expect(next).not.toBe(scene);
   return next;
+}
+
+/** Lookup helper — blocks have no scene.ts memoized accessor. */
+function blockById(scene: SceneDef, blockId: string): Block | undefined {
+  return scene.blocks?.find((b) => b.id === blockId);
 }
 
 describe('snap / snapRect', () => {
@@ -479,6 +511,176 @@ describe('removeTeam', () => {
 
   it('throws naming an unknown team id', () => {
     expect(() => removeTeam(makeScene(), 'team-ghost', [])).toThrow(/team-ghost/);
+  });
+});
+
+describe('makeBlockId', () => {
+  it('returns blk-<kind>-1 when the scene has no blocks at all', () => {
+    expect(makeBlockId(makeScene(), 'wall')).toBe('blk-wall-1');
+    expect(makeBlockId(makeScene(), 'box')).toBe('blk-box-1');
+  });
+
+  it('returns the smallest unused blk-prefixed id per kind', () => {
+    const scene = makeSceneWithBlocks(); // has blk-wall-1 and blk-pillar-1
+    expect(makeBlockId(scene, 'wall')).toBe('blk-wall-2');
+    expect(makeBlockId(scene, 'pillar')).toBe('blk-pillar-2');
+    expect(makeBlockId(scene, 'slab')).toBe('blk-slab-1');
+  });
+
+  it('skips over gaps until the id is unique', () => {
+    const scene = addBlock(makeSceneWithBlocks(), {
+      id: 'blk-wall-2',
+      kind: 'wall',
+      rect: { x: 0, z: 20, w: 4, d: 0.5 },
+      height: 3,
+    });
+    expect(makeBlockId(scene, 'wall')).toBe('blk-wall-3');
+  });
+});
+
+describe('addBlock', () => {
+  const draft: Block = {
+    id: 'blk-box-1',
+    kind: 'box',
+    rect: { x: 3.3, z: 0.2, w: 1.1, d: 0.2 },
+    height: 1.5,
+  };
+
+  it('appends the block with a snapped, min-clamped rect', () => {
+    const next = expectImmutable((s) => addBlock(s, draft), makeSceneWithBlocks);
+    expect(next.blocks).toHaveLength(3);
+    expect(blockById(next, 'blk-box-1')?.rect).toEqual({ x: 3.5, z: 0, w: 1, d: 0.5 });
+  });
+
+  it('starts a fresh blocks array on a scene without one', () => {
+    const scene = makeScene();
+    expect(scene.blocks).toBeUndefined();
+    const next = addBlock(scene, draft);
+    expect(next.blocks).toHaveLength(1);
+    expect(scene.blocks).toBeUndefined();
+  });
+
+  it('does not mutate the passed-in block', () => {
+    const before = structuredClone(draft);
+    addBlock(makeSceneWithBlocks(), draft);
+    expect(draft).toEqual(before);
+  });
+
+  it('throws naming a duplicate id', () => {
+    expect(() => addBlock(makeSceneWithBlocks(), { ...draft, id: 'blk-wall-1' })).toThrow(
+      /blk-wall-1/,
+    );
+  });
+
+  it('throws on non-positive height', () => {
+    expect(() => addBlock(makeScene(), { ...draft, height: 0 })).toThrow(/height/);
+    expect(() => addBlock(makeScene(), { ...draft, height: -2 })).toThrow(/height/);
+  });
+});
+
+describe('moveBlock', () => {
+  it('translates the footprint snapped to the grid', () => {
+    const next = expectImmutable((s) => moveBlock(s, 'blk-wall-1', 1.3, -0.7), makeSceneWithBlocks);
+    expect(blockById(next, 'blk-wall-1')?.rect).toEqual({ x: 1.5, z: 9.5, w: 8, d: 0.5 });
+  });
+
+  it('leaves untouched blocks reference-equal (structural sharing)', () => {
+    const scene = makeSceneWithBlocks();
+    const next = moveBlock(scene, 'blk-wall-1', 2, 0);
+    expect(blockById(next, 'blk-pillar-1')).toBe(blockById(scene, 'blk-pillar-1'));
+    expect(next.blocks).not.toBe(scene.blocks);
+  });
+
+  it('throws naming an unknown block id', () => {
+    expect(() => moveBlock(makeSceneWithBlocks(), 'blk-wall-9', 1, 1)).toThrow(/blk-wall-9/);
+    expect(() => moveBlock(makeScene(), 'blk-wall-1', 1, 1)).toThrow(/blk-wall-1/);
+  });
+});
+
+describe('resizeBlockTo', () => {
+  it('replaces the rect snapped to the grid', () => {
+    const next = expectImmutable(
+      (s) => resizeBlockTo(s, 'blk-wall-1', { x: 1.2, z: 1.2, w: 6.3, d: 0.7 }),
+      makeSceneWithBlocks,
+    );
+    expect(blockById(next, 'blk-wall-1')?.rect).toEqual({ x: 1, z: 1, w: 6.5, d: 0.5 });
+  });
+
+  it('clamps width and depth to the minimum size of 0.5', () => {
+    const next = resizeBlockTo(makeSceneWithBlocks(), 'blk-pillar-1', {
+      x: 0,
+      z: 0,
+      w: 0.1,
+      d: -1,
+    });
+    expect(blockById(next, 'blk-pillar-1')?.rect).toEqual({ x: 0, z: 0, w: 0.5, d: 0.5 });
+  });
+
+  it('throws naming an unknown block id', () => {
+    expect(() => resizeBlockTo(makeSceneWithBlocks(), 'nope', { x: 0, z: 0, w: 1, d: 1 })).toThrow(
+      /nope/,
+    );
+  });
+});
+
+describe('removeBlock', () => {
+  it('removes the block and nothing else', () => {
+    const next = expectImmutable((s) => removeBlock(s, 'blk-wall-1'), makeSceneWithBlocks);
+    expect(next.blocks?.map((b) => b.id)).toEqual(['blk-pillar-1']);
+  });
+
+  it('throws naming an unknown block id', () => {
+    expect(() => removeBlock(makeSceneWithBlocks(), 'blk-slab-1')).toThrow(/blk-slab-1/);
+    expect(() => removeBlock(makeScene(), 'blk-wall-1')).toThrow(/blk-wall-1/);
+  });
+});
+
+describe('updateBlockMeta', () => {
+  it('applies kind, height, y, and color', () => {
+    const next = expectImmutable(
+      (s) =>
+        updateBlockMeta(s, 'blk-wall-1', { kind: 'slab', height: 0.2, y: 3, color: '#aabbcc' }),
+      makeSceneWithBlocks,
+    );
+    const b = blockById(next, 'blk-wall-1');
+    expect(b?.kind).toBe('slab');
+    expect(b?.height).toBe(0.2);
+    expect(b?.y).toBe(3);
+    expect(b?.color).toBe('#aabbcc');
+    expect(b?.rect).toEqual({ x: 0, z: 10, w: 8, d: 0.5 });
+  });
+
+  it('leaves omitted fields unchanged', () => {
+    const next = updateBlockMeta(makeSceneWithBlocks(), 'blk-pillar-1', { height: 5 });
+    const b = blockById(next, 'blk-pillar-1');
+    expect(b?.height).toBe(5);
+    expect(b?.kind).toBe('pillar');
+    expect(b?.y).toBe(0);
+    expect(b?.color).toBe('#888888');
+  });
+
+  it('accepts y = 0', () => {
+    const next = updateBlockMeta(makeSceneWithBlocks(), 'blk-wall-1', { y: 0 });
+    expect(blockById(next, 'blk-wall-1')?.y).toBe(0);
+  });
+
+  it('throws on non-positive height', () => {
+    expect(() => updateBlockMeta(makeSceneWithBlocks(), 'blk-wall-1', { height: 0 })).toThrow(
+      /height/,
+    );
+    expect(() => updateBlockMeta(makeSceneWithBlocks(), 'blk-wall-1', { height: -1 })).toThrow(
+      /height/,
+    );
+  });
+
+  it('throws on negative y', () => {
+    expect(() => updateBlockMeta(makeSceneWithBlocks(), 'blk-wall-1', { y: -0.5 })).toThrow(/-0.5/);
+  });
+
+  it('throws naming an unknown block id', () => {
+    expect(() => updateBlockMeta(makeSceneWithBlocks(), 'blk-ghost', { height: 1 })).toThrow(
+      /blk-ghost/,
+    );
   });
 });
 
