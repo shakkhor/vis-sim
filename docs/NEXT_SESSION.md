@@ -21,20 +21,21 @@ Open preview.html in a real browser: 2D/Iso views must show the scene with small
 fixed-size labels (regression check for the ortho fix). Editor shell: left rail
 cycles with `[`, Edit scene toggles its tool group closed on second click.
 
+## State update (2026-07-16 ~04:30 +06): 52 commits, 256 tests green, tree clean.
+Shipped since first handoff: scene rename + team editor (with governance guards),
+custom-scene deletion, Delete-key scoping fix (US-6), unidirectional-flow rule kind
+(corridor-2 is one-way east in pharma), 2D/Iso label fix, preview regenerated.
+
 ## Backlog, in priority order (user direction: scene building > governance/permissions)
 
-1. Custom scene management: delete a custom scene from the picker; rename scenes;
-   currently New scene ids persist in localStorage forever (flagged concern).
-2. Teams editor for custom scenes (blank scenes have hardcoded ops/partner teams —
-   can't add teams from UI; blocks the "build your own facility" story).
-3. Block editing in scene mode (blocks are data but not editable in-app: select/move/
+1. Block editing in scene mode (blocks are data but not editable in-app: select/move/
    add walls; consider auto-wall generation around a zone).
-4. Inline dialogs replacing window.confirm (PRD deviation flagged by wave-4 master).
-5. Delete-key scoping: in scene mode with a resource selected, Delete should delete
-   the resource, not the selected move (PRD US-6 deviation).
-6. Unidirectional-flow rule kind (user's GMP reference drawings show directional
-   personnel/material flows; rules can't express direction yet).
-7. Per-reviewer scoped playback (approver sees their zones framed) — deferred
+2. Inline dialogs replacing window.confirm (PRD deviation flagged by wave-4 master).
+3. Rule editor UI (rules are data but only editable in JSON; scene card could list
+   rules with add/remove for the three kinds).
+4. Actor library polish: distinct meshes per actor kind, counts badge, path arrows
+   showing direction (pairs with the unidirectional rule).
+5. Per-reviewer scoped playback (approver sees their zones framed) — deferred
    governance, only after scene building satisfies the user.
 
 ## Known constraints
