@@ -8,7 +8,7 @@ import {
   OrthographicCamera,
   PerspectiveCamera,
 } from '@react-three/drei';
-import { Vector3 } from 'three';
+import { Color, Mesh, Vector3 } from 'three';
 import { useVisSim } from '../state/store';
 import { teamColor } from '../domain/scene';
 import { actorPositions } from '../domain/actors';
@@ -29,6 +29,12 @@ import type {
  * viewport never requests a rect the domain would clamp differently. */
 const MIN_SIZE = 2;
 
+/** Mirrors sceneEdit's BLOCK_MIN_SIZE — thin walls are legitimate. */
+const BLOCK_MIN_SIZE = 0.5;
+
+/** Replacement raycast that opts a mesh out of pointer events entirely. */
+const NO_RAYCAST = () => null;
+
 /** Ground plane footprint: 130×90 centered on (0, 4). Guides/grid span it. */
 const GROUND = { minX: -65, maxX: 65, minZ: -41, maxZ: 49 } as const;
 
@@ -40,7 +46,19 @@ type SnapGuide = { axis: 'x' | 'z'; value: number };
 type DragState =
   | { kind: 'move'; id: string; start: Vec2; startRect: Rect; last: Rect | null }
   | { kind: 'resize'; id: string; min: Vec2; last: Rect | null }
+  | { kind: 'block-move'; id: string; start: Vec2; startRect: Rect; last: Rect | null }
+  | { kind: 'block-resize'; id: string; min: Vec2; last: Rect | null }
   | { kind: 'waypoint'; moveId: string; index: number; last: Vec2 | null };
+
+/** Project a pointer event's ray onto the y=0 ground plane. Blocks are tall, so
+ * their surface hit point would be parallax-shifted from the ground-plane points
+ * that drive the rest of the drag — anchor block drags on the ground instead. */
+function groundPoint(e: ThreeEvent<PointerEvent>): Vec2 {
+  const { origin, direction } = e.ray;
+  if (Math.abs(direction.y) < 1e-6) return { x: e.point.x, z: e.point.z };
+  const t = -origin.y / direction.y;
+  return { x: origin.x + direction.x * t, z: origin.z + direction.z * t };
+}
 
 function rectFromPoints(a: Vec2, b: Vec2): Rect {
   return {
@@ -145,6 +163,14 @@ function ResourceMesh({
   );
 }
 
+/** Two-click draw preview tint per armed tool. */
+const PREVIEW_COLORS: Record<'zone' | 'connector' | 'wall' | 'box', string> = {
+  zone: '#7aa2ff',
+  connector: '#e8c34a',
+  wall: '#8892aa',
+  box: '#5d6a94',
+};
+
 /** Renderer defaults when a block does not carry an explicit color. */
 const BLOCK_COLORS: Record<BlockKind, string> = {
   wall: '#8892aa',
@@ -153,48 +179,147 @@ const BLOCK_COLORS: Record<BlockKind, string> = {
   slab: '#3a4257',
 };
 
-/** Passive scene structure (walls, pillars, ...). Never interactive: raycast is
- * disabled so blocks can never intercept or occlude resource pointer events. */
-function Blocks({ blocks }: { blocks: Block[] }) {
+/** Scene structure (walls, pillars, ...). Outside scene-edit mode raycast is
+ * disabled so blocks can never intercept or occlude resource pointer events;
+ * in scene-edit mode blocks are selectable/draggable like resources. */
+function BlockMesh({
+  block,
+  selected,
+  onSelect,
+  onDragStart,
+}: {
+  block: Block;
+  selected: boolean;
+  onSelect?: (e: ThreeEvent<MouseEvent>) => void;
+  onDragStart?: (e: ThreeEvent<PointerEvent>) => void;
+}) {
+  const { rect } = block;
+  const interactive = Boolean(onSelect || onDragStart);
+  const color = block.color ?? BLOCK_COLORS[block.kind];
+  const topY = (block.y ?? 0) + block.height;
+  return (
+    <group
+      position={[rect.x + rect.w / 2, 0, rect.z + rect.d / 2]}
+      onClick={onSelect}
+      onPointerDown={onDragStart}
+    >
+      <mesh
+        position={[0, (block.y ?? 0) + block.height / 2, 0]}
+        raycast={interactive ? Mesh.prototype.raycast : NO_RAYCAST}
+      >
+        <boxGeometry args={[rect.w, block.height, rect.d]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={selected ? color : '#000000'}
+          emissiveIntensity={selected ? 0.45 : 0}
+        />
+      </mesh>
+      {selected && (
+        <Line
+          points={[
+            [-rect.w / 2, topY + 0.08, -rect.d / 2],
+            [rect.w / 2, topY + 0.08, -rect.d / 2],
+            [rect.w / 2, topY + 0.08, rect.d / 2],
+            [-rect.w / 2, topY + 0.08, rect.d / 2],
+            [-rect.w / 2, topY + 0.08, -rect.d / 2],
+          ]}
+          color="#ffffff"
+          lineWidth={2.5}
+        />
+      )}
+    </group>
+  );
+}
+
+/** One actor glyph at position `p`. Shape encodes the actor kind: cohort =
+ * small sphere, staff = capsule-ish (cylinder + sphere cap), vehicle = box,
+ * material = small darker cube. */
+function ActorGlyph({ kind, p, color }: { kind: Move['actorKind']; p: Vec2; color: string }) {
+  switch (kind) {
+    case 'vehicle':
+      return (
+        <mesh position={[p.x, 0.8, p.z]}>
+          <boxGeometry args={[2.2, 1.4, 1.2]} />
+          <meshStandardMaterial color={color} />
+        </mesh>
+      );
+    case 'staff':
+      return (
+        <group position={[p.x, 0, p.z]}>
+          <mesh position={[0, 0.6, 0]}>
+            <cylinderGeometry args={[0.32, 0.32, 1.0, 12]} />
+            <meshStandardMaterial color={color} />
+          </mesh>
+          <mesh position={[0, 1.1, 0]}>
+            <sphereGeometry args={[0.32, 12, 12]} />
+            <meshStandardMaterial color={color} />
+          </mesh>
+        </group>
+      );
+    case 'material':
+      return (
+        <mesh position={[p.x, 0.45, p.z]}>
+          <boxGeometry args={[0.9, 0.9, 0.9]} />
+          <meshStandardMaterial color={new Color(color).multiplyScalar(0.72)} />
+        </mesh>
+      );
+    default: // cohort
+      return (
+        <mesh position={[p.x, 0.7, p.z]}>
+          <sphereGeometry args={[0.45, 12, 12]} />
+          <meshStandardMaterial color={color} />
+        </mesh>
+      );
+  }
+}
+
+/** Actors of one move at the current playhead, staggered along the window.
+ * actorPositions() stays the single source of positions. */
+function MoveActors({ scene, move, t }: { scene: SceneDef; move: Move; t: number }) {
+  const positions = actorPositions(move, t);
+  if (positions.length === 0) return null;
+
+  const color = teamColor(scene, move.teamId);
+
   return (
     <group>
-      {blocks.map((b) => (
-        <mesh
-          key={b.id}
-          position={[b.rect.x + b.rect.w / 2, (b.y ?? 0) + b.height / 2, b.rect.z + b.rect.d / 2]}
-          raycast={() => null}
-        >
-          <boxGeometry args={[b.rect.w, b.height, b.rect.d]} />
-          <meshStandardMaterial color={b.color ?? BLOCK_COLORS[b.kind]} />
-        </mesh>
+      {positions.map((p, i) => (
+        <ActorGlyph key={i} kind={move.actorKind} p={p} color={color} />
       ))}
     </group>
   );
 }
 
-/** Actors of one move at the current playhead, staggered along the window. */
-function MoveActors({ scene, move, t }: { scene: SceneDef; move: Move; t: number }) {
-  const positions = actorPositions(move, t);
-  if (positions.length === 0) return null;
+/** Minimum segment length that earns a direction arrowhead. */
+const ARROW_MIN_SEGMENT = 2;
 
-  const isCohort = move.actorKind === 'cohort';
+/** Flat triangular arrowheads at each path-segment midpoint, pointing along the
+ * segment. Raycast-disabled so they never intercept viewport pointer events. */
+function PathArrows({ scene, move, selected }: { scene: SceneDef; move: Move; selected: boolean }) {
   const color = teamColor(scene, move.teamId);
-
+  const size = selected ? 1.0 : 0.8;
+  const arrows = useMemo(() => {
+    const out: { x: number; z: number; angle: number }[] = [];
+    for (let i = 0; i < move.path.length - 1; i++) {
+      const a = move.path[i];
+      const b = move.path[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      if (Math.hypot(dx, dz) < ARROW_MIN_SEGMENT) continue;
+      out.push({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, angle: Math.atan2(dx, dz) });
+    }
+    return out;
+  }, [move.path]);
   return (
     <group>
-      {positions.map((p, i) =>
-        move.actorKind === 'vehicle' ? (
-          <mesh key={i} position={[p.x, 0.8, p.z]}>
-            <boxGeometry args={[2.2, 1.4, 1.2]} />
-            <meshStandardMaterial color={color} />
+      {arrows.map((a, i) => (
+        <group key={i} position={[a.x, 0.55, a.z]} rotation={[0, a.angle, 0]}>
+          <mesh rotation={[Math.PI / 2, 0, 0]} raycast={NO_RAYCAST}>
+            <coneGeometry args={[size * 0.38, size, 6]} />
+            <meshStandardMaterial color={color} transparent opacity={0.8} />
           </mesh>
-        ) : (
-          <mesh key={i} position={[p.x, 0.7, p.z]}>
-            <sphereGeometry args={[isCohort ? 0.45 : 0.55, 12, 12]} />
-            <meshStandardMaterial color={color} />
-          </mesh>
-        ),
-      )}
+        </group>
+      ))}
     </group>
   );
 }
@@ -248,10 +373,15 @@ function SceneBody({
   const addDraftPoint = useVisSim((s) => s.addDraftPoint);
   const selectedMoveId = useVisSim((s) => s.selectedMoveId);
   const selectedResourceId = useVisSim((s) => s.selectedResourceId);
+  const selectedBlockId = useVisSim((s) => s.selectedBlockId);
   const pendingAdd = useVisSim((s) => s.pendingAdd);
   const selectResource = useVisSim((s) => s.selectResource);
+  const selectBlock = useVisSim((s) => s.selectBlock);
   const resizeResourceTo = useVisSim((s) => s.resizeResourceTo);
   const addResourceAt = useVisSim((s) => s.addResourceAt);
+  const addBlockAt = useVisSim((s) => s.addBlockAt);
+  const moveBlockBy = useVisSim((s) => s.moveBlockBy);
+  const resizeBlockTo = useVisSim((s) => s.resizeBlockTo);
   const moveMoveWaypoint = useVisSim((s) => s.moveMoveWaypoint);
 
   // Camera orbit is disabled while a drag gesture is live (PRD §4). The drei
@@ -326,13 +456,18 @@ function SceneBody({
         setDrawAnchor(p);
         setDrawCursor(p);
       } else {
-        addResourceAt(pendingAdd, rectFromPoints(drawAnchor, p));
+        const rect = rectFromPoints(drawAnchor, p);
+        if (pendingAdd === 'wall' || pendingAdd === 'box') {
+          addBlockAt(pendingAdd, rect);
+        } else {
+          addResourceAt(pendingAdd, rect);
+        }
         setDrawAnchor(null);
         setDrawCursor(null);
       }
       return;
     }
-    selectResource(null); // empty-ground click clears selection (US-1)
+    selectResource(null); // empty-ground click clears both selections (US-1)
   };
 
   // All drag gestures resolve against the ground plane here. Move/resize both
@@ -377,6 +512,31 @@ function SceneBody({
           drag.last = next;
           setGuides(snapped.guides);
         }
+      } else if (drag.kind === 'block-move') {
+        // Grid snap only — blocks get no neighbor magnetism. moveBlockBy takes a
+        // delta, so apply the difference from the last-applied snapped rect.
+        const next: Rect = {
+          x: snap(drag.startRect.x + (p.x - drag.start.x)),
+          z: snap(drag.startRect.z + (p.z - drag.start.z)),
+          w: drag.startRect.w,
+          d: drag.startRect.d,
+        };
+        if (!drag.last || next.x !== drag.last.x || next.z !== drag.last.z) {
+          const prev = drag.last ?? drag.startRect;
+          moveBlockBy(drag.id, next.x - prev.x, next.z - prev.z);
+          drag.last = next;
+        }
+      } else if (drag.kind === 'block-resize') {
+        const next: Rect = {
+          x: drag.min.x,
+          z: drag.min.z,
+          w: Math.max(BLOCK_MIN_SIZE, snap(p.x) - drag.min.x),
+          d: Math.max(BLOCK_MIN_SIZE, snap(p.z) - drag.min.z),
+        };
+        if (!drag.last || next.w !== drag.last.w || next.d !== drag.last.d) {
+          resizeBlockTo(drag.id, next);
+          drag.last = next;
+        }
       } else {
         const sp = { x: snap(p.x), z: snap(p.z) };
         if (!drag.last || sp.x !== drag.last.x || sp.z !== drag.last.z) {
@@ -395,6 +555,10 @@ function SceneBody({
   const selectedResource =
     mode === 'scene' && selectedResourceId
       ? (scene.resources.find((r) => r.id === selectedResourceId) ?? null)
+      : null;
+  const selectedBlock =
+    mode === 'scene' && selectedBlockId
+      ? ((scene.blocks ?? []).find((b) => b.id === selectedBlockId) ?? null)
       : null;
   const selectedMove =
     (mode === 'select' || mode === 'scene') && selectedMoveId
@@ -523,18 +687,70 @@ function SceneBody({
         >
           <boxGeometry args={[Math.max(previewRect.w, 0.1), 0.3, Math.max(previewRect.d, 0.1)]} />
           <meshBasicMaterial
-            color={pendingAdd === 'connector' ? '#e8c34a' : '#7aa2ff'}
+            color={pendingAdd ? PREVIEW_COLORS[pendingAdd] : '#7aa2ff'}
             transparent
             opacity={0.35}
           />
         </mesh>
       )}
 
-      <Blocks blocks={scene.blocks ?? []} />
+      {(scene.blocks ?? []).map((b) => (
+        <BlockMesh
+          key={b.id}
+          block={b}
+          selected={mode === 'scene' && b.id === selectedBlockId}
+          onSelect={
+            editable
+              ? (e) => {
+                  if (e.delta > 4) return; // ignore orbit/edit drags
+                  e.stopPropagation();
+                  selectBlock(b.id);
+                }
+              : undefined
+          }
+          onDragStart={
+            editable && b.id === selectedBlockId
+              ? (e) => {
+                  e.stopPropagation();
+                  beginDrag({
+                    kind: 'block-move',
+                    id: b.id,
+                    start: groundPoint(e),
+                    startRect: { ...b.rect },
+                    last: null,
+                  });
+                }
+              : undefined
+          }
+        />
+      ))}
+
+      {editable && selectedBlock && (
+        <mesh
+          position={[
+            selectedBlock.rect.x + selectedBlock.rect.w,
+            0.35,
+            selectedBlock.rect.z + selectedBlock.rect.d,
+          ]}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            beginDrag({
+              kind: 'block-resize',
+              id: selectedBlock.id,
+              min: { x: selectedBlock.rect.x, z: selectedBlock.rect.z },
+              last: null,
+            });
+          }}
+        >
+          <boxGeometry args={[0.9, 0.6, 0.9]} />
+          <meshBasicMaterial color="#ffffff" />
+        </mesh>
+      )}
 
       {moves.map((m) => (
         <group key={m.id}>
           <PathLine scene={scene} move={m} selected={m.id === selectedMoveId} />
+          <PathArrows scene={scene} move={m} selected={m.id === selectedMoveId} />
           <MoveActors scene={scene} move={m} t={playhead} />
         </group>
       ))}
